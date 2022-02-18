@@ -1,0 +1,79 @@
+library(ggplot2)
+library(dplyr)
+
+
+
+```{r}
+library(ggplot2)
+ggplot(data$What.is.your.attitude.towards.online.learning.~data$What.is.your.current.level.of.study.at.UNSW.)
+```
+
+```{r}
+library(forcats)
+data %>%
+  mutate(class = fct_reorder(data$What.is.your.current.level.of.study.at.UNSW., data$What.is.your.attitude.towards.online.learning., .fun='median')) %>%
+  ggplot( aes(x=reorder(data$What.is.your.current.level.of.study.at.UNSW., data$What.is.your.attitude.towards.online.learning.), y=data$What.is.your.attitude.towards.online.learning., fill=class)) + 
+    geom_boxplot() +
+    xlab("Level of study") +
+    theme(legend.position="none") +
+    ylab("Attitude towards online learning")
+```
+
+```{r}
+data %>%
+  mutate(name = fct_reorder(data$What.is.your.current.level.of.study.at.UNSW., data$What.is.your.attitude.towards.online.learning.)) %>%
+  ggplot( aes(x=data$What.is.your.current.level.of.study.at.UNSW., y=data$What.is.your.attitude.towards.online.learning.)) +
+    geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+    coord_flip() +
+    xlab("") +
+    theme_bw()
+```
+```{r}
+library(forcats)
+data %>%
+  mutate(class = fct_reorder(data$What.is.your.current.year.at.UNSW., data$What.is.your.attitude.towards.online.learning., .fun='median')) %>%
+  ggplot( aes(x=reorder(data$What.is.your.current.year.at.UNSW., data$What.is.your.attitude.towards.online.learning.), y=data$What.is.your.attitude.towards.online.learning., fill=class)) + 
+    geom_boxplot() +
+    xlab("Current year") +
+    theme(legend.position="none") +
+    ylab("Attitude towards online learning")
+```
+```{r}
+library(forcats)
+data %>%
+  mutate(class = fct_reorder(data$Faculty.of.your.degree., data$What.is.your.attitude.towards.online.learning., .fun='median')) %>%
+  ggplot( aes(x=reorder(data$Faculty.of.your.degree., data$What.is.your.attitude.towards.online.learning.), y=data$What.is.your.attitude.towards.online.learning., fill=class)) + 
+    geom_boxplot() +
+    xlab("Faculty") +
+    theme(legend.position="none") +
+    ylab("Attitude towards online learning")
+```
+
+```{r}
+library(forcats)
+data %>%
+  mutate(class = fct_reorder(data$How.long.is.your.commute.to.UNSW., data$What.is.your.attitude.towards.online.learning., .fun='median')) %>%
+    ggplot( aes(x=reorder(data$How.long.is.your.commute.to.UNSW., data$What.is.your.attitude.towards.online.learning.), y=data$What.is.your.attitude.towards.online.learning., fill=class)) + 
+    geom_boxplot() +
+    xlab("Commute time") +
+    theme(legend.position="none") +
+    ylab("Attitude towards online learning")
+
+```
+```{r}
+library(forcats)
+data %>%
+  mutate(class = fct_reorder(data$What.is.your.current.employment.status., data$What.is.your.attitude.towards.online.learning., .fun='median')) %>%
+    ggplot( aes(x=reorder(data$What.is.your.current.employment.status., data$What.is.your.attitude.towards.online.learning.), y=data$What.is.your.attitude.towards.online.learning., fill=class)) + 
+    geom_boxplot() +
+    xlab("Employment status") +
+    theme(legend.position="none") +
+    ylab("Attitude towards online learning")
+
+```
+```{r}
+library(forcats)
+    boxplot(data$What.is.your.attitude.towards.online.learning.,col="red") 
+
+```
+

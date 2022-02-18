@@ -1,0 +1,272 @@
+]
+```{r}
+s1 <- c(146, 180, 251, 152, 72, 181, 171, 361, 73, 186)
+s2 <- c( 99, 101, 52, 121)
+s3<- c(226, 129, 57, 46, 86, 43, 85, 165)
+s4<- c( 87, 43, 59)
+r<-(52*mean(s1)+19*mean(s2)+39*mean(s3)+14*mean(s4))/(52+19+39+14)
+t<-c(52*mean(s1),19*mean(s2),39*mean(s3),14*mean(s4))
+Es <- c(r*52,r*19,r*39,r*14)
+ssu<-var(t-Es)*45^2*(1-4/45)/4
+sqrt(1318204467+10094794)
+psu <- 45/4*(52*52*(1-10/52)/10*6988.9+19*19*(1-4/19)/4*854.9+39*39*(1-8/39)/8*4172.3+14*14*(1-3/14)/3*496)
+sqrt(ssu+psu)
+t
+Es
+temp <- c(0)
+
+for (i in 1:4){
+  temp[i] <- (t[i]-Es[i])^2
+}
+temp
+ssu <- sum(temp)*1/3*1/4*(1-4/45)*45^2
+sqrt(ssu+psu)
+
+```
+
+
+```{r}
+#one-stage cluster
+y1 <- scan(text="0 1 2 2 1 2 1 1 2")
+y2 <- scan(text="1 1 1 0 1 2 1 1 2 0")
+y3 <- scan(text="0 1 0 0 1 1 2 1 2")
+y4 <- scan(text="2 2 1 3 0 1 2")
+N <- 33
+n <- 4
+t <- c(sum(y1),sum(y2),sum(y3),sum(y4))
+t
+t.bar <- mean(t)
+t.bar
+(tau.hat <- t.bar * N )
+tau.se <- sqrt(N^2*(1-n/N)*1/n * var(t))
+tau.se
+
+#proportion
+Mi <- c(length(y1),length(y2),
+        length(y3),length(y4))
+ai <- c(sum(y1==0),sum(y2==0),sum(y3==0),sum(y4==0))
+(p.hat <- sum(ai)/sum(Mi) )
+(p.se <- sqrt(1/mean(Mi)^2 *(1-n/N)/n * var(ai-Mi*p.hat)) )
+```
+
+```{r}
+y1 <- c(4,7,4,8,8,4)
+y2 <- c(3,2,5,9,6,5)
+y3 <- c(5,6,4,10,6,1)
+y4 <- c(4,5,3,6,5,4)
+ytot <- y1+y2+y3+y4
+y <- list(y1,y2,y3,y4)
+var(y1)
+var(y2)
+var(y3)
+var(y4)
+var(ytot)
+4/3*(1-sum(var(y1),var(y2),var(y3),var(y4))/var(ytot))
+```
+
+
+```{r}
+q1<-c(4,3,5,4)
+q2<-c(7,2,6,5)
+q3<-c(4,5,4,3)
+q4<-c(8,9,10,6)
+q5<-c(8,6,6,5)
+q6<-c(4,5,1,4)
+qq1<-q1+q3+q5
+qq2<-q2+q4+q6
+qq1
+qq2
+r12<- cor(qq1,qq2)
+2*r12/(1+r12)
+```
+
+
+```{r}
+q1<-c(4,3,5,4)
+q2<-c(7,2,6,5)
+q3<-c(4,5,4,3)
+q4<-c(8,9,10,6)
+q5<-c(8,6,6,5)
+q6<-c(4,5,1,4)
+qq1<-q1+q3+q5
+qq2<-q2+q4+q6
+qq1
+qq2
+r12<- cor(qq1,qq2)
+2*r12/(1+r12)
+
+```
+```{r}
+Nh <- c(25,45,30)*1000
+wh<-Nh/100000
+nh <- c(225,405,270)
+ph <- c(45,25,3)/100
+prop <- sum(wh^2*(1-nh/Nh)*ph*(1-ph)/(nh-1))
+prop
+srs <- sum((1-nh/Nh)*ph*(1-ph)/(nh-1))
+srs/prop
+```
+
+```{r}
+Mi <- c(792,447,511,800,489)
+yi <- c(10/25,3/15,6/20,21/40,7/20)
+mi <- c(25,15,20,40,20)
+yt <- sum(Mi*yi)/sum(Mi)
+yt
+temp1<- sum((mi/(mi-1)*yi*(1-yi))^2*1/mi*Mi^2*(1-mi/Mi))
+temp2<-sum((Mi^2*yi^2))-2*yt*sum(yi*Mi^2)+yt^2*sum(Mi^2)
+temp3 <- 21880^-2*(36^2*31/36*1/20*temp2+36/5*temp1)
+
+yt+c(-1,1)*1.96*sqrt(temp3)
+
+21880.8*yt
+
+
+(yt+c(-1,1)*1.96*sqrt(temp3))*21880.8
+
+
+
+```
+
+
+
+```{r}
+#2-stage
+rm(list=ls())
+y1 <- c(260, 296, 182)
+y2 <- c(156, 261, 130, 302, 241)
+y3 <- c(196, 356, 268, 284)
+mi <- c(length(y1),length(y2),length(y3))
+Mi <- c(12,8,12)
+n <- 3
+N <- 5
+M <- 12*3 + 8*2
+t.hat <- sapply(list(y1,y2,y3),mean)*Mi
+t.hat
+(tau.N <- mean(t.hat)*N ) # naive estimator
+
+(tau.r <- M*sum(t.hat)/sum(Mi)) # ratio estimator
+
+#s.e. of naive estimator
+tau.N.se <- sqrt(N^2*(1-n/N)/n*var(t.hat)
+                  + N/n*sum(Mi^2*(1-mi/Mi)/mi*sapply(list(y1,y2,y3),var)))
+tau.N.se
+
+## s.e. for the ratio estimator:
+tau.r.se <- sqrt(N^2*(1-n/N)/n*var(t.hat - sum(t.hat)/sum(Mi) *Mi)
+                 + N/n*sum(Mi^2*(1-mi/Mi)/mi*sapply(list(y1,y2,y3),var)))
+tau.r.se
+```
+```{r}
+rm(list=ls())
+## copy and paste in the data:
+y1 <- c(5, 7, 9, 0, 11, 2, 8, 4, 3, 5)
+y2 <- c(4, 3, 7, 2, 11, 0, 1, 9, 4, 3, 2, 1, 5)
+y3 <- c(5, 6, 4, 1, 12, 0, 11, 8, 4)
+y4 <- c(6, 4, 0, 1, 0, 9, 8, 4, 6, 10)
+y5 <- c(11, 4, 3, 1, 0, 2, 8, 6, 5, 3)
+y6 <- c(12, 0, 3, 4, 2, 0, 11, 1, 4, 3, 2, 4)
+y7 <- c(3, 7, 6, 7, 8, 4, 3, 2)
+y8 <- c(3, 6, 4, 3, 2, 2, 8, 4, 0, 4, 5, 6, 3)
+y9 <- c(6, 4, 7, 3, 9, 1, 4, 5)
+y10 <- c(6, 7, 5, 10, 1, 2, 11, 4, 0, 5, 4)
+Mi <- c(50,65,45,48,52,58,42,66,40,56)
+y <- list(y1,y2,y3,y4,y5,y6,y7,y8,y9,y10)
+mi <- lengths(y)
+M <- 4500
+N <- 90
+n <- 10
+## (a):
+t.hat <- sapply(y,mean) * Mi
+## the naive estimate
+ybar.na <- mean(t.hat) * N /M
+ybar.na
+V.n <- N^2*(1-n/N)*1/n*var(t.hat) + N/n*sum(Mi^2*(1-
+mi/Mi)/mi*sapply(y,var))
+ybar.na.se <- sqrt(V.n/M^2)
+ybar.na.se # the s.e.
+## (b):
+## ratio estimate of the mean down time
+temp <- (N*sum(Mi))/n
+ybar.ra <- mean(t.hat)*N/temp
+  ybar.ra
+  sum(t.hat)/sum(Mi)
+## the s.e.:
+ybar.ra.se <- sqrt((1-n/N)*1/n*var(t.hat-ybar.ra*Mi)/mean(Mi)^2 +
+                   1/(n*N*mean(Mi)^2)*sum(Mi^2*(1-
+mi/Mi)/mi*sapply(y,var)) )
+ybar.ra.se
+ybar.ra.se.1 <- sqrt((1-n/N)*1/n*var(t.hat-ybar.ra*Mi)/(M/N)^2 +
+                   1/(n*N*(M/N)^2)*sum(Mi^2*(1-
+mi/Mi)/mi*sapply(y,var)) )
+ybar.ra.se.1
+
+```
+
+
+```{r}
+#RC
+xt <- 130/340*(1083/13)+210/340*(1362/21)
+yt <- 130/340*(74290/13)+210/340*(98810/21)
+rt <-yt/xt
+X <- 9830/130*13/34+13250/210*21/34
+yrc=rt*X
+yrc
+sx1<- 59.256
+sy1 <-3471.32
+ro1 <-0.9786
+sx2<-41.224
+sy2<-3239.71
+ro2<-0.9881
+w1<-130/340
+w2<-210/340
+vyrc<-w1^2*(1-0.1)*(sy1^2+rt^2*sx1^2-2*ro1*rt*sx1*sy1)/13+w2^2*(1-0.1)*(sy2^2+rt^2*sx2^2-2*ro2*rt*sx2*sy2)/21
+sqrt(vyrc)*340
+
+```
+
+```{r}
+#RS
+ys<-13/34*74290/1083*9830/130+21/34*98810/1362*13250/210
+rt1 <-74290/1083
+rt2 <-98810/1362
+vyrs<-w1^2*(1-0.1)*(sy1^2+rt1^2*sx1^2-2*ro1*rt1*sx1*sy1)/13+w2^2*(1-0.1)*(sy2^2+rt2^2*sx2^2-2*ro2*rt2*sx2*sy2)/21
+vyrs
+
+
+```
+
+```{r}
+#temp
+#find sample
+a1<- c(5,3,3,7,4,4,6,6,4,5,3,7,5,4,5,6,3,5,1,3,5,6,4,4)
+a2 <-5*a1
+a3 <- c(0,cumsum(a2))
+rs <- 84+(0:4)*sum(a1)
+findInterval(rs,a3)
+
+
+```
+
+```{r}
+#HT
+sx <-108
+p <- c(4,5,4,1,4)/sx
+n<-5
+y <-c(40,52,39,20,42)
+tau <- sum(y/p)/n
+tau
+sdht <-sqrt(1/n^2*sum((1-(n-1)*p)*(y/p-tau)^2))
+sdht
+```
+```{r}
+sx <-sum(400,350,760,432,860,1180,530,600,1320,490,1040,310,520,900)
+p <- c(530,900,350)/sx
+n<-3
+y <-c(6,10,4)
+tau <- sum(y/p)/n
+tau
+sdht <-sqrt(1/n^2*sum((1-(n-1)*p)*(y/p-tau)^2))
+sdht
+```
+

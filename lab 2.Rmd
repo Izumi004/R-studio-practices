@@ -1,0 +1,320 @@
+---
+title: "UNSW DATA1001 Week 2 Lab"
+author: "Pavel Krivitsky"
+date: ' 2021 Term 2'
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+subtitle: Exporatory Data Analysis
+---
+
+
+# Instructions
+
+Work through the exercises below. If you find yourself stuck, raise your hand or type your question in chat.
+
+# Packages required
+
+Please install the following packages (if you haven't already). The
+following code can check whether a package is installed and install if
+not.
+```{r, eval=FALSE}
+required_packages <- c("rmarkdown", "dplyr", "Hmisc", "latentnet", "ggplot2", "GGally", "readr", "here")
+installed_packages <- rownames(installed.packages()) # installed.packages() is a data frame with info about versions and other things we don't need.
+to_install <- setdiff(required_packages, installed_packages) # Which ones are required but not installed?
+install.packages(to_install) # Install them.
+```
+
+# Examples from Tuesday's lecture
+
+The following is the code used in Tuesday's lecture on exploratory data analysis. Download `student_data.csv` from the datasets folder, and place it in the same directory as the Markdown file. They generally use the base R graphics.
+
+## Reading in the data
+
+```{r, read_students}
+library(dplyr) # A set of tools for data processing included in `tidyverse`.
+
+# "X::Y" means run function Y from package X.
+#
+# LHS %>% RHS pass the results of the LHS as the first argument of RHS
+#
+# select(-`Course ID`) = Select all columns *except* for "Course ID". Note how "Course ID", since it contains a space, must be enclosed in backquotes ("`").
+#
+# factor(Grade, levels=c("F","P","C","D","HD")) = Take the Grades (which are character strings) and encode them as a *factor*, a kind of categorical variable, specifying *levels* with a specific ordering.
+#
+# mutate(Grade = ... Grade ...) = take the column Grade from the table (or some other column), perform some expression on it, such as converting it to a factor, and assign it back to column Grade (or some other column.
+#
+# R assignment can be done in three ways: TO = FROM, TO <- FROM, and FROM -> TO.
+readr::read_csv("student_data.csv") %>% select(-`Course ID`) %>% mutate(Grade = factor(Grade, levels=c("F","P","C","D","HD"))) -> sdata
+```
+
+```{r, students_table}
+# kable() is a function for typesetting a table in knitr and rmarkdown. booktabs=TRUE (usually) produces nicer formatting, particularly for PDFs.
+kable(sdata, booktabs=TRUE)
+```
+
+## Summarising categorical data
+
+```{r}
+# Tabulate the frequencies of Courses and covert them to a data frame (with columns Course and Freq), then use mutate() to add another column, Percent, a function of Freq.
+ccount <- table(Course=sdata$Course) %>% as.data.frame() %>% mutate(Percent = Freq/sum(Freq)*100)
+kable(ccount, booktabs=TRUE)
+```
+```{r}
+# Cross-tabulate Course with Grade, and plot the resulting contingency table.
+ccount2 <- table(Course=sdata$Course,Grade=sdata$Grade)
+kable(ccount2, booktabs=TRUE)
+```
+
+## Summarising quantitative data
+
+```{r, mean_grades_by_sex}
+# group_by(Sex) = make the following operation be evaluated on each of the sexes separately.
+# summarise(mean(Score)) = Evaluate the mean value of Score within each of the previously defined groups, returning a data table with two rows, one for each sex.
+sdata %>% group_by(Sex) %>% summarize(mean(Score)) %>% kable(booktabs=TRUE)
+```
+```{r, median_grades_by_sex}
+# See above, but with median score.
+sdata %>% group_by(Sex) %>% summarize(median(Score)) %>% kable(booktabs=TRUE)
+```
+```{r, q_grades_by_sex}
+# As above, but notice that we can create multiple columns in summarize().
+sdata %>% group_by(Sex) %>% summarize(Q1=quantile(Score,.25),Q3=quantile(Score,.75)) %>% kable(booktabs=TRUE)
+```
+```{r, iqr_grades_by_sex}
+
+sdata %>% group_by(Sex) %>% summarize(IQR=diff(quantile(Score,c(.25,.75)))) %>% kable(booktabs=TRUE)
+```
+```{r, sd_grades_by_sex}
+# As above, but with variance and standard deviation.
+sdata %>% group_by(Sex) %>% summarize(var(Score),sd(Score)) %>% kable(booktabs=TRUE)
+```
+
+
+## Plotting quantitative data
+
+```{r}
+data(iris) # Request the iris dataset from R.
+# round(seq(1,nrow(iris),length.out=12)) = Create a sequence of 12 numbers starting with 1, ending with the number of rows in the iris dataset (150), and evenly spaced in between. Then round to the nearest integer to create indices. This would be called a *systematic sample*.
+kable(iris[round(seq(1,nrow(iris),length.out=12)),],row.names=FALSE,booktabs=TRUE)
+```
+
+```{r}
+# filter(iris,Species=="setosa") = Return only those rows whose species is "setosa".
+setosa <- filter(iris,Species=="setosa")
+# Plot a histogram of its Sepal.Width, with a blank "main" title at the top and a horizontal (x) axis label. Plot density, rather than frequency. (For density, the *area* of a bar is proportional to the fraction of the dataset in that bar.)
+hist(setosa$Sepal.Width, main="", xlab="Sepal Width",freq=FALSE)
+# Add a line approximating the density of the data.
+lines(density(setosa$Sepal.Width))
+```
+
+```{r}
+# Sepal.Width~Species = Variable Sepal.Width (in dataset iris) with a boxplot for each species.
+boxplot(Sepal.Width~Species, data=iris, notch=TRUE, ylab="Sepal Width")
+```
+
+```{r}
+# Note the use of the :: operation. It's needed because we don't want to library(Hmisc), since it causes some conflicts.
+#
+# with(iris, ...) = Evaluate ... treating columns of iris as variables.
+# split(Sepal.Width, Species) = Split the variable Sepal.Width into a list of three vectors, one for each Species.
+Hmisc::bpplot(with(iris, split(Sepal.Width, Species)))
+```
+
+```{r}
+data(anscombe)
+```
+
+```{r}
+par(mfrow=c(2,2),mar=c(5,5,0,0)+.05)
+for(i in 1:4){
+  x<-anscombe[[i]]; y<-anscombe[[i+4]]
+  plot(x,y, xlab=paste0("x",i),ylab=paste0("y",i))
+  abline(lsfit(x,y))
+} 
+```
+
+
+```{r}
+# Plot the legend. Don't worry about it.
+plot.new(); legend(0, 0.5, levels(iris$Species),       fill=2:4, ncol=3)
+```
+
+
+```{r}
+# Pairwise scatterplot of everything but the last column (Species). Color by the index corresponding to the species, and use small plotting symbols.
+pairs(iris[,-5],col=as.numeric(iris$Species)+1,pch=".")
+```
+
+
+```{r}
+# Perform the PCA and make the biplot. Center and scale the variables before the analysis.
+PLPW.pca <- prcomp(iris[,-5], center = TRUE, scale. = TRUE)
+biplot(PLPW.pca)
+```
+
+```{r}
+# Also plot the relatie importance of each component.
+plot(PLPW.pca,main="")
+```
+
+
+## Plotting categorical data
+
+
+```{r}
+data(HairEyeColor) # This is a 3D array.
+kable(HairEyeColor[,,1], booktabs=TRUE)
+```
+
+
+```{r}
+data(HairEyeColor)
+kable(HairEyeColor[,,2], booktabs=TRUE)
+```
+
+
+```{r}
+# For each hair colour (dimension 1) take the total number through the array, collapsing the remaining dimensions.
+hair_freq <- apply(HairEyeColor, 1, sum)
+# Give different cair colour bars appropriate colour names.
+hair_col <- c("black", "burlywood4", "darkorange1", "yellow")
+barplot(hair_freq, col=hair_col)
+```
+
+
+```{r}
+# Now, sort the frequencies (in decreasing order) and evaluate their proportion (by dividing by their total number). Also, reorder the colours in the same order.
+barplot(sort(hair_freq, decreasing=TRUE)/sum(hair_freq), col=hair_col[order(hair_freq, decreasing=TRUE)])
+```
+
+```{r}
+par(mfrow=c(1,2), mar=c(4,3,0,0)+.1) # mfrow=c(1,2) = two plots side-by-side (but only for base R graphics)
+# We are now collapsing across dimension 3 (Sex) to create counts for each combination of hair and eye colour.
+barplot(apply(HairEyeColor, 1:2, sum), beside=TRUE, col=c("black", "burlywood4", "darkorange1", "yellow"), xlab="Eye colour")
+barplot(apply(HairEyeColor, 1:2, sum), beside=FALSE, col=c("black", "burlywood4", "darkorange1", "yellow"), xlab="Eye colour")
+```
+
+
+```{r}
+# Make a mosaic plot from the frequencies.
+mosaicplot(apply(HairEyeColor, 2:1, sum), main="", color=c("black", "burlywood4", "darkorange1", "yellow"))
+```
+
+```{r}
+mosaicplot(HairEyeColor, main="", color=TRUE, xlab="", ylab="")
+```
+
+
+## Plotting network data
+
+```{r}
+library(latentnet) # Load the package latentnet
+data(sampson) # Obtain the Samuel F. Sampson's monks liking data (samplike).
+# Fit a latent space model with 2 spatial dimensions and 3 clusters, as well as a latent receiver (attractiveness effect).
+samp.fit2 <- suppressWarnings(ergmm(samplike ~ euclidean(d=2, G=3)+rreceiver))
+```
+
+```{r}
+# Plot the locations and the clusters, using small piecharts to indicate cluster affiliation and scaling the symbol size according to the receive reffect.
+plot(samp.fit2, pie=TRUE, rand.eff="receiver", main="", print.formula=FALSE,xlab="",ylab="",suppress.axes=TRUE,suppress.center=TRUE)
+```
+
+# Exercises: Alternative Titanic Data
+
+We will use the [Kaggle Titanic Dataset](https://www.kaggle.com/c/titanic/data). Rather than providing frequencies, it provides demographic and ticketing information about the passengers, as well as an indicator of whether they survived the sinking of the ship.
+
+Import the file `titanic2.csv` from the data frame. One way to do this is to save the file in your project folder (I used a `titanic2.csv` of a `Datasets` subfolder to keep things organised.), navigating to it via the `Files` tab and clicking it. Another is to use the `here` package: 
+```{r, message=FALSE}
+library(readr)
+library(here)
+titanic2 <- read_csv(here("Datasets","titanic2.csv"))
+```
+Note that R has a built-in dataset `Titanic`, that you used last week. This is why we will use `titanic2` throughout.
+
+## 1) Data Summaries
+
+### a)
+`titanic2` is now a data frame in your workspace. Display it.
+
+
+### b)
+Output the `names` of its columns and use the `dim()` function to obtain its dimensions.
+
+
+### c)
+From the `r dim(titanic2)[2]` variables, which ones are categorical? Which are ordinal? Which ones are discrete? Which ones are continuous? You may want to refer to [dataset documentation](https://www.kaggle.com/c/titanic/data).
+
+
+
+### d)
+Extract the numbers of categories (also called levels) for `Embarked`.  
+**Hint:** The `factor()` function explicitly creates a categorical variable; 
+the `levels()` function extracts the levels from a categorical variable. 
+
+
+### e)
+
+Using `dplyr` verbs, obtain the mean, the standard deviation, median, and the 1st and 3rd quartiles of the fare paid by a passenger (`Fare`), for each passenger class (`Pclass`).
+
+
+## 2) Visualisation with ggplot2
+
+The library `ggplot2` is based on the Grammar of Graphics, which assumes high-level abstractions around data frames and plots. Learning it will allow you to create beautiful plots from dataframes fast. 
+
+There are many ggplot tutorials online. Skim through e.g. [this one](http://r-statistics.co/ggplot2-Tutorial-With-R.html).
+
+### a)
+Here is how you would make a side-to-side bar plot for `Survived` and `Pclass`:
+
+```{r}
+library(ggplot2)
+titanic2$Survived <- factor(titanic2$Survived)
+levels(titanic2$Survived) <- c("died", "survived")
+titanic2 %>% ggplot(mapping = aes(x=Pclass)) + geom_bar(aes(fill=Survived))
+```
+
+Now, make the same kind of plot for `Survived` and `Sex`?
+
+
+### b)
+Plot the ticket price distribution for the three passenger classes, using a kernel density estimator for each.  
+**Hints:**
+
+* `Pclass` is saved as an integer; to tell R to use it as a categorical variable, convert it via `factor()`
+* for prices, a logarithmic scale is often more appropriate, see `scale_x_log10()`. 
+
+```{r}
+library(dplyr)
+titanic2$Pclass <- factor(titanic2$Pclass)
+titanic2 %>% 
+  filter(Fare > 0) %>% 
+  ggplot(mapping = aes(x=Fare, fill=Pclass)) + 
+  geom_density(alpha=0.3) + 
+  scale_x_log10()
+```
+
+Looks like for each class the humps correspond to multiple tickets (1, 2, possibly 3). Where data are sparse, density estimators can be misleading; let's plot the histograms as well, just for safety: 
+
+```{r}
+titanic2 %>% filter(Fare > 0) %>%
+  ggplot(aes(x=Fare, fill=Pclass)) + 
+  geom_histogram(position="identity", alpha=0.5, bins=75) + 
+  scale_x_log10()
+```
+
+### c)
+
+`ggpairs` in `GGally` is a great function plotting pairwise interactions, a more powerful version of `pairs`, in that it automatically chooses a useful plot for each variable pair: 
+
+* correlations and scatterplots if both variables are continuous;
+* pairs of histograms and boxplots if one variable is continuous and the other categorical; and
+* barplots if both variables are categorical.
+    
+Run the following code. Note the `select(-Name, -Ticket, -Cabin, -PassengerId)` to remove the passenger and ticket name and cabin (categorical attributes with too many levels) from the data. Comment on the variables and their relationships.
+```{r, message=FALSE, warning=FALSE}
+library(GGally)
+titanic2 %>% select(-Name, -Ticket, -Cabin, -PassengerId) %>% ggpairs()
+```
+We can also use `aes()` to add colours and such to the plot. For example, try passing `aes(colour=..., alpha=0.3)` for `...` as some categorical factors such as sex or passenger class, and see if it reveals any patterns.
