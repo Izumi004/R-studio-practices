@@ -1,0 +1,1326 @@
+---
+title: "ACTL5110 Sandbox Project"
+author: "PG-02"
+date: '2022'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Note: Please download the file "external data used".
+From line 1 to 850, its data cleaning, binding and visualization. 
+From line 850 - 1300, its modeling, validation and model selection session.
+Final model is included at the bottom of this file.
+After getting external and original data ready, please choose to RUN all chunks, the results will be reproduced.
+
+
+##----Load Package------------------------------------------------------------
+```{r load}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(scales)
+library(aod)
+library(MASS)
+library(ISLR)
+library(pscl)
+library(tidyverse)
+library(caret)
+library(pls)
+library(glmnet)
+library(class)
+library(pROC)
+library(tibble)
+```
+
+##-------------------Read Data------------------------------------------------
+```{r}
+data <- read.csv("ACTL31425110AssignmentData2022.csv", header = TRUE, stringsAsFactors = FALSE)
+AUSsteelprice <- read.csv("AUSsteelprice.csv", header = TRUE, stringsAsFactors = FALSE)
+InsuranceCPI <- read.csv("InsuranceCPI.csv", header = TRUE, stringsAsFactors = FALSE)
+Crudeoil <- read.csv("Crudeoil.csv",header = TRUE, stringsAsFactors = FALSE)
+AUSCPI_quater <- read.csv("AUSCPI_quater.csv",header = TRUE, stringsAsFactors = FALSE)
+AUSWPI <- read.csv("AUSWPI.csv",header = TRUE, stringsAsFactors = FALSE)
+data
+```
+
+### DATA CLEANING
+##----Calculate "car_age" from "year_of_manufacture"
+```{r}
+data <- data %>%
+  #select(year_of_manufacture) %>%
+  mutate(data,
+    car_age = as.numeric(str_sub(accident_month, 1, 4)) - year_of_manufacture)
+#data <- data[,-1]
+data
+```
+
+##----Change "NA" values in "total_claims_cost" to 0
+```{r}
+data$total_claims_cost[is.na(data$total_claims_cost)] <- 0
+```
+
+##----Create "claim frequency" and assign value "1" to where there is an accident
+```{r}
+data[, "claim_frequency"] = NA
+data$claim_frequency[data$claim_loss_date == ""] <- 0
+data$claim_frequency[is.na(data$claim_frequency)] <- 1
+data
+```
+
+##---- Changing Date Variables to Date Format
+```{r}
+datecol <- which(startsWith(colnames(data),'term')) # find which column is date statistics
+for (i in datecol) { 
+  data[,i] <- as.Date(str_sub(data[,i], 1, 10)) # cut 'year-month-day' from original data and then convert from string to date format
+}
+```
+
+##----Create "claim_loss_month" which entails of the year and month of "claim_loss_date" only
+```{r}
+data <- data %>%
+  mutate_at(11, ~as.Date(data$claim_loss_date, format = "%Y-%m-%d")) %>%
+  mutate("claim_loss_month_temp" = as.Date(data$claim_loss_date, format = "%Y-%m-%d")) 
+data$claim_loss_month <- format(as.Date(data$claim_loss_month_temp), "%Y-%m")
+data <- within(data,rm(claim_loss_month_temp))
+data
+```
+
+##----Convert Vehicle Class from String to Numeric
+```{r}
+data$vehicle_class <- as.numeric(str_sub(data$vehicle_class, 7))
+data
+```
+
+##----Create a new data set including variables of significance for modelling claim frequency
+```{r}
+data_cf <- data %>%
+  group_by(policy_id, risk_state_name, risk_postcode, car_age, vehicle_class) %>%
+  summarise(claim_frequency = sum(claim_frequency),
+            total_claims_cost = sum(total_claims_cost))
+data_cf
+```
+
+##----External Data-----------------------------------------------------------
+```{r}
+AUSCPI_quater <- na.omit(AUSCPI_quater)
+InsuranceCPI <- na.omit(InsuranceCPI)
+
+smooth_ex_data <- function(x) { # x is the vector of the data you want to smooth
+  ex_data <- unique(na.omit(x))
+  n <- length(ex_data)-1
+  result<-c()
+  for (i in c(1:n)) {
+    part <- seq(from=ex_data[i], to=ex_data[i+1], length.out=4)[1:3]
+    result<-append(result,part)
+  }
+  return (result)
+}
+
+a <- smooth_ex_data(InsuranceCPI$InsuranceCPI)
+b <- smooth_ex_data(AUSCPI_quater$AUSCPI_quater)
+c <- smooth_ex_data(AUSWPI$AUS_privateWPI)
+InsuranceCPI$InsuranceCPI[1:60] <- a
+AUSCPI_quater$AUSCPI_quater[1:54] <- b
+AUSWPI$AUS_privateWPI [1:72] <- c
+```
+
+##----Binding External Data---------------------------------------------------
+```{r}
+colnames(data)[1] <- "accident_month"
+colnames(AUSsteelprice)[1] <- "accident_month"
+data$accident_month <- as.Date(data$accident_month,"%Y-%m-%d")
+InsuranceCPI$accident_month <- as.Date(InsuranceCPI$accident_month,"%Y-%m-%d")
+AUSCPI_quater$accident_month <- as.Date(AUSCPI_quater$accident_month,"%Y-%m-%d")
+Crudeoil$accident_month <- as.Date(Crudeoil$accident_month,"%Y-%m-%d")
+AUSsteelprice$accident_month <- as.Date(AUSsteelprice$accident_month,"%Y-%m-%d")
+AUSWPI$accident_month <- as.Date(AUSWPI$accident_month,"%Y-%m-%d")
+
+data1 <- merge(x=data,y=Crudeoil,by="accident_month", all.x = TRUE)
+data2 <- merge(x=data1,y=AUSCPI_quater,by="accident_month",all.x =TRUE)
+rm(data1)
+data3 <- merge(x=data2,y=InsuranceCPI,by="accident_month",all.x = TRUE)
+rm(data2)
+data4 <- merge(x=data3,y=AUSsteelprice,by="accident_month",all.x = TRUE)
+rm(data3)
+data5 <- merge(x=data4,y=AUSWPI,by="accident_month",all.x = TRUE)
+rm(data4)
+data <- data5
+rm(data5)
+data <- data[-c(17:19,24)]
+data
+```
+
+##----Create a new data set including variables of significance for modelling claim costs
+```{r}
+data_cc <- data %>% 
+  group_by(policy_id, risk_state_name, risk_postcode, car_age, vehicle_class,oil_Close,AUSCPI_quater,sum_insured,policy_tenure,InsuranceCPI,AUS_steel_price,AUS_privateWPI) %>%
+  summarise(claim_frequency = sum(claim_frequency),
+            total_claims_cost = sum(total_claims_cost))
+data_cc$total_claims_cost[data_cc$total_claims_cost==0]<-NA
+data_cc<-na.omit(data_cc)
+data_cc
+
+data_cc1 <- data.frame(data_cc,
+                       log10.suminsured = log10(data_cc$sum_insured),
+                       log10.totalclaimcost = log10(data_cc$total_claims_cost),
+                       log10.oilclose = log10(data_cc$oil_Close),
+                       log10.AUSCPI = log10(data_cc$AUSCPI_quater),
+                       log10.InsuranceCPI = log10(data_cc$InsuranceCPI),
+                       log10.SteelPrice = log10(data_cc$AUS_steel_price),
+                       log10.WPI = log10(data_cc$AUS_privateWPI))
+data_cc1
+```
+
+##----Get Claim Data----------------------------------------------------------
+```{r}
+claim <- data %>% #mutate_at(13, ~replace_na(., 0)) %>% # replace 'NA' with 0s
+  mutate("claim_loss_month" = as.Date(data$claim_loss_date, format = "%Y-%m-%d")) # change to date format
+#claim$claim_loss_month <- str_sub(claim$claim_loss_date, 1, 7)
+claim$claim_loss_month <- format(claim$claim_loss_date, format = "%Y-%m")
+claim
+onlyclaim <- filter(data,data$total_claims_cost > 0)
+```
+
+##----Add a temporary variable indicating whether a policy holder has a claim
+```{r}
+Claim_TF <- rep(FALSE, nrow(data)) 
+Claim_TF[data$total_claims_cost > 0] <- TRUE
+data <- data.frame(data,Claim_TF)
+```
+
+
+
+##----Back up Original Data in case of any change
+```{r}
+#back up original data in case of any change
+backup_temp <- data
+backup_temp
+```
+
+
+
+### DATA ANALYSIS
+##----Data Grouping (By Month only) Assumption: Month label 0 is 2016-07, 60 is 2021-06 vice versa.
+```{r}
+claimbymonth <- data %>%
+  group_by(claim_loss_month) %>%
+  summarise(claim_freq=sum(!is.na(claim_loss_date)), 
+            avgclaim_cost=mean(total_claims_cost))
+claimbymonth <- claimbymonth[-nrow(claimbymonth),]
+claimbymonth
+#claimbymonth[ , 3 ][ claimbymonth[ , 3 ] > 1 ] <- 1 # change freq more than 1 to be just 1
+```
+
+##----Visualization-----------------------------------------------------------
+```{r}
+ggplot(data = claimbymonth, mapping = aes(x = c(1:nrow(claimbymonth)), y = claim_freq)) + 
+  geom_point() +
+  geom_smooth(se=FALSE) +
+  labs(title = "Claim Frequency by Month", x = "Month", y = "Claim Frequency", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  
+ggplot(data = claimbymonth, mapping = aes(x = c(1:nrow(claimbymonth)), y = avgclaim_cost)) + 
+  geom_point() +
+  geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average Claim Cost by Month", x = "Month", y = "Average Claim Cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Data Grouping (By State and Month)--------------------------------------
+```{r}
+claimbymonth_state <- data %>% # prepare data for plot
+  group_by(risk_state_name, claim_loss_month) %>%
+  summarise(claim_freq=n(), 
+            claim_cost=sum(total_claims_cost),
+            average_cost = claim_cost/claim_freq)
+claimbymonth_state
+```
+
+##----Visualization (Part 1: For Each State)----------------------------------
+```{r}
+for (i in unique(claimbymonth_state$risk_state_name)){
+  p <- claimbymonth_state %>% filter(risk_state_name == i) %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_cost)) + 
+  geom_col() +
+  scale_y_continuous(labels = comma) +
+  labs(title = paste0("Claim Frequency by Month for each", sep = " ", i), x = "Month", y = "Claim Amount") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+  
+  print(p)
+}
+```
+
+##----Visualization (Part 2)--------------------------------------------------
+```{r}
+# Claims by Each State
+claimbymonth_state %>% na.omit() %>%
+  ggplot(mapping = aes(x = risk_state_name, y = claim_freq)) + 
+  geom_col() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Claim Frequency by Month for each State", x = "States", y = "Claim Frequency", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+claimbymonth_state %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_freq, color = risk_state_name)) + 
+  geom_point() +
+  labs(title = "Claim Frequency by Month for each State", x = "Month", y = "Claim Frequency", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+# PLot for Claim Frequency
+claimbymonth_state %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_freq, color = risk_state_name)) + 
+  geom_line(aes(group = risk_state_name)) +
+  labs(title = "Claim Frequency by Month for each State", x = "Month", y = "Claim Frequency", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+# Plot for Total Claim Cost
+claimbymonth_state %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_cost, color = risk_state_name)) + 
+  geom_line(aes(group = risk_state_name)) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Total Claim Cost by Month for each State", x = "Month", y = "Total Claim Cost", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+# Plot for Total Claim Cost
+claimbymonth_state %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = average_cost, color = risk_state_name)) + 
+  geom_line(aes(group = risk_state_name)) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average Claim Cost by Month for each State", x = "Month", y = "Total Claim Cost", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+# Histogram plot for Claim Frequency
+claimbymonth_state %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_freq, fill = risk_state_name)) + 
+  geom_col() +
+  labs(title = "Claim Frequency by Month for each State", x = "Month", y = "Claim Frequency", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+# Proportion of Claim Frequencies by each State
+claimbymonth_state %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_freq, fill = risk_state_name)) + 
+  geom_col(position = "fill") +
+  labs(title = "Claim Frequency by Month for each State", x = "Month", y = "Claim Frequency", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+```
+
+##----Data Grouping (By Postcode)---------------------------------------------
+```{r}
+claimbymonth_postcode <- data %>% # prepare data for plot
+  group_by(risk_postcode, claim_loss_month) %>%
+  summarise(claim_freq=n(), 
+            claim_cost=sum(total_claims_cost))
+claimbymonth_postcode
+```
+
+##----Visualization-----------------------------------------------------------
+```{r}
+claimbymonth_postcode %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_freq, color = risk_postcode)) +
+  geom_jitter() +
+  labs(title = "Claim Frequency by Month", x = "Postcodes", y = "Claim Frequency", color = "Postcodes") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+claimbymonth_postcode %>% na.omit() %>%
+  ggplot(mapping = aes(x = risk_postcode)) +
+  geom_histogram(bins = 50,colour="darkblue", fill="lightblue") +
+  #geom_density(alpha=.2, fill="#FF6666") +
+  labs(title = "Claim Frequency by Month", x = "Postcodes", y = "Claim Frequency", color = "Postcodes") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Data Grouping (By Vehicle Class) Note: Class 2 has no claims at all
+```{r}
+claimbymonth_vehicle <- data %>% # prepare data for plot
+  group_by(vehicle_class, claim_loss_month) %>%
+  summarise(claim_freq=n(), 
+            claim_cost=sum(total_claims_cost),
+            mean_cost = claim_cost/claim_freq)
+claimbymonth_vehicle
+
+
+# Just frequency of claims
+data %>% # prepare data for plot
+  group_by(vehicle_class) %>%
+  summarise(claim_freq=sum(!is.na(claim_loss_month)), 
+            claim_cost=sum(total_claims_cost),
+            mean_cost = claim_cost/claim_freq)
+
+
+# frequency claims including NAs
+data %>% # prepare data for plot
+  group_by(vehicle_class) %>%
+  summarise(claim_freq=n(), 
+            claim_cost=sum(total_claims_cost),
+            mean_cost = claim_cost/claim_freq)
+```
+
+##----Visualization-----------------------------------------------------------
+```{r}
+# Claims by Vehicle Class
+claimbymonth_vehicle %>% na.omit() %>%
+ggplot(mapping = aes(x = vehicle_class, y = claim_freq)) + 
+  geom_col() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Claim Frequency for Vehicle Class", x = "Vehicle Class", y = "Claim Frequency") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+
+claimbymonth_vehicle %>% na.omit() %>%
+  ggplot(mapping = aes(x = vehicle_class, y = claim_cost)) + 
+  geom_col() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Total Claim Cost for Vehicle Class", x = "Vehicle Class", y = "Claim Cost") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+
+
+# By Claim Frequency
+claimbymonth_vehicle %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_freq, color = factor( vehicle_class))) + 
+  geom_point() +
+  geom_smooth(se=FALSE) +
+  labs(title = "Claim Frequency by Month for Vehicle Class", x = "Month", y = "Claim Frequency", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+claimbymonth_vehicle %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_freq, color = factor(vehicle_class))) + 
+  geom_line(aes(group = vehicle_class)) +
+  #geom_smooth(se=FALSE) +
+  labs(title = "Claim Frequency by Month for Vehicle Class", x = "Month", y = "Claim Frequency", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+
+
+# By Claim Cost
+claimbymonth_vehicle %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_cost, color = factor( vehicle_class))) + 
+  geom_point() +
+  geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Total Claim Cost by Month for Vehicle Class", x = "Month", y = "Claim Cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+claimbymonth_vehicle %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = claim_cost, color = factor( vehicle_class))) + 
+  geom_line(aes(group = vehicle_class)) +
+  geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Total Claim Cost by Month for Vehicle Class", x = "Month", y = "Claim Cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+
+
+claimbymonth_vehicle %>% na.omit() %>%
+  ggplot(mapping = aes(x = claim_loss_month, y = mean_cost, color = factor( vehicle_class))) + 
+  geom_point() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average Claim Cost by Month for Vehicle Class", x = "Month", y = "Average Claim Cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+```
+
+##----Visulization for Proportion of Claim------------------------------------
+```{r}
+claim_class <- data %>%
+  group_by(vehicle_class) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2) )
+
+ggplot(claim_class, aes(x = vehicle_class , y = Percent, fill = Claim_TF ))+
+  geom_bar(stat = "identity")+
+  ggtitle("Percentage of claims for each vehicle class")+
+  geom_text(aes(label = paste(Percent,"%"), y = Percent), 
+            position = position_stack(vjust = 0.5))+
+  labs(x = "Vehicle class", y = "Percentage",fill = "Has a claim")
+
+claim_state <- data %>%
+  group_by(risk_state_name) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2) )
+claim_state
+
+ggplot(claim_state, aes(x = risk_state_name , y = Percent, fill = Claim_TF ))+
+  geom_bar(stat = "identity")+
+  ggtitle("Percentage of claims for each state")+
+  geom_text(aes(label = paste(Percent,"%"), y = Percent), 
+            position = position_stack(vjust = 0.5))+
+  labs(x = "State", y = "Percentage",fill = "Has a claim")
+
+claim_state_true <- filter(claim_state,Claim_TF == TRUE)
+claim_state_true
+ggplot(data = claim_state_true, mapping = aes(risk_state_name,Percent)) + 
+  geom_col() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by state", x = "State", y = "Percentage of claim over all policy holder", color = "States") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Analysis on Vechile Class [not by month as above]------------------------
+```{r}
+claim_class <- data %>%
+  group_by(vehicle_class) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2)) 
+claim_class_true <- filter(claim_class, Claim_TF == TRUE)
+
+ggplot(data = claim_class_true, mapping = aes(vehicle_class,Percent)) + 
+  geom_col() +
+  #geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by vehicle class", x = "Vehicle class", y = "Proportion of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##---- Analysis on Suburb [not by month as above]-----------------------------
+```{r}
+claim_suburb <- data %>%
+  group_by(risk_postcode) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2)) 
+claim_suburb
+claim_suburb_true <- claim_suburb %>%  filter(Claim_TF == TRUE)
+
+claim_suburb_true %>% na.omit() %>%
+  ggplot(mapping = aes(x = risk_postcode, y=Percent)) +
+  geom_col(bins = 50,colour="darkblue", fill="lightblue") +
+  #geom_density(alpha=.2, fill="#FF6666") +
+  labs(title = "Percentage proportion of claim by suburb", x = "Postcodes", y = "Claim Frequency", color = "Postcodes") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Analysis on Tenure------------------------------------------------------
+```{r}
+claim_tenure <- data %>%
+  group_by(policy_tenure) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2) )
+
+subsdata_tenure <- claim %>% 
+  group_by(policy_tenure) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+            Averagecostmd = totalcost/ClaimCount,
+            Percentage = ClaimCount/n(),
+            tenure_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+
+
+claim_tenure_true <- filter(claim_tenure,Claim_TF == TRUE)
+
+ggplot(data = claim_tenure_true, mapping = aes(claim_tenure_true$policy_tenure,claim_tenure_true$Percent)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by tenure", x = "Policy tenure", y = "Frequency of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+subsdata_tenure <- subsdata_tenure[-c(37:40),]
+ggplot(data = subsdata_tenure, mapping = aes(subsdata_tenure$policy_tenure,subsdata_tenure$Averagecostmd)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average cost of claim by tenure", x = "Policy tenure", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+dim(subsdata_tenure)
+subsdata_tenure[c(33:36),c(1,2,5)]
+```
+
+##----Analysis on Sum Insured-------------------------------------------------
+```{r}
+claim_suminsured <- data %>%
+  group_by(sum_insured) %>% 
+  count(Claim_TF)%>%
+  mutate(total = n(),
+         claimed = sum(Claim_TF==TRUE),
+         Sum_insured_class = round(sum_insured/10000, digits = 0) )
+claim_suminsured
+
+claim_suminsured <- claim_suminsured %>% 
+  group_by(Sum_insured_class) %>% 
+  summarise(ClaimCount = sum(claimed),
+            totalcount = sum(total),
+            Percentage = ClaimCount / totalcount)
+claim_suminsured
+
+ggplot(data = claim_suminsured, mapping = aes(Sum_insured_class, Percentage)) + 
+  geom_point() +
+  #geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by sum of insured(10000)", x = "Sum of insured(10000)", y = "% proportion of insured that has a claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+
+subsdata_suminsured <- claim %>% 
+  group_by(sum_insured) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+            Averagecostmd = totalcost/ClaimCount,
+            Percentage = ClaimCount/n(),
+            tenure_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+
+claim_suminsured_md <- filter(subsdata_suminsured,subsdata_suminsured$Averagecostmd > 0)
+
+claim_suminsured_md %>% 
+  ggplot(mapping = aes(x = sum_insured, y = Averagecostmd)) +
+  geom_jitter() +
+  labs(title = "Average claim cost by sum of insured", x = "Sum of insured", y = "Average claim cost", color = "Postcodes") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), axis.text.x = element_text(size = 7, angle = 90))
+
+```
+
+##----Analysis on Year of Manufacture-----------------------------------------
+```{r}
+claim_manu <- data %>%
+  group_by(year_of_manufacture) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2) )
+
+subsdata_manu <- claim %>% 
+  group_by(year_of_manufacture) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+            Averagecostmd = totalcost/ClaimCount,
+            Percentage = ClaimCount/n(),
+            tenure_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+
+claim_manu_true <- filter(claim_manu,Claim_TF == TRUE)
+
+claim_manu_true <- claim_manu_true[-1,]
+ggplot(data = claim_manu_true, mapping = aes(year_of_manufacture,Percent)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by year of manufacture", x = "Year of manufacture", y = "Frequency of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+ggplot(data = subsdata_manu, mapping = aes(year_of_manufacture,Averagecostmd)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  scale_x_continuous(limits=c(1950, 2025)) +
+  labs(title = "Average cost of claim by year of manufacture", x = "Year of manufacture", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Analysis on Car Age-----------------------------------------------------
+```{r}
+claim_age <- data %>%
+  group_by(car_age) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2) )
+
+subsdata_age <- claim %>% 
+  group_by(car_age) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+            Averagecostmd = totalcost/ClaimCount,
+            Percentage = ClaimCount/n(),
+            tenure_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+subsdata_age$Averagecostmd[is.na(subsdata_age$Averagecostmd)] <- 0
+
+
+
+claim_age_true <- filter(claim_age,Claim_TF == TRUE)
+
+claim_age_true <- claim_age_true[-1,]
+ggplot(data = claim_age_true, mapping = aes(car_age,Percent)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by car age", x = "Car age", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+ggplot(data = subsdata_age, mapping = aes(car_age,Averagecostmd)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average cost of claim by car age", x = "Car age", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+
+
+###### Part 2 Milestone #####
+### Analyzing External Data
+##----Analysis on AUS CPI-----------------------------------------------------
+```{r}
+claim_AUSCPI <- data %>%
+  group_by(AUSCPI_quater) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2)) 
+claim_AUSCPI_true <- filter(claim_AUSCPI, Claim_TF == TRUE)
+claim_AUSCPI_true
+ggplot(data = claim_AUSCPI_true, mapping = aes(AUSCPI_quater,Percent)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by Australia CPI", x = "AUS CPI", y = "Frequency of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+
+Temporary1 <- data %>% 
+  group_by(AUSCPI_quater) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+             Averagecostmd = totalcost/ClaimCount,
+            state_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+
+ggplot(data = Temporary1, mapping = aes(AUSCPI_quater,Averagecostmd)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average cost of claim by AUS CPI", x = "AUS CPI", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##--- Analysis on Insurance CPI-----------------------------------------------
+```{r}
+claim_INSCPI <- data %>%
+  group_by(InsuranceCPI) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2)) 
+claim_INSCPI_true <- filter(claim_INSCPI, Claim_TF == TRUE)
+claim_INSCPI_true
+ggplot(data = claim_INSCPI_true, mapping = aes(InsuranceCPI,Percent)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by insurance CPI", x = "Insurance CPI", y = "Frequency of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+
+Temporary1 <- data %>% 
+  group_by(InsuranceCPI) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+             Averagecostmd = totalcost/ClaimCount,
+            state_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+Temporary1
+
+ggplot(data = Temporary1, mapping = aes(InsuranceCPI,Averagecostmd)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average cost of claim by insurance CPI", x = "insurance CPI", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Analysis by Petrol Price------------------------------------------------
+```{r}
+claim_Crudeoil <- data %>%
+  group_by(oil_Close) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2)) 
+claim_Crudeoil_true <- filter(claim_Crudeoil, Claim_TF == TRUE)
+claim_Crudeoil_true
+ggplot(data = claim_Crudeoil_true, mapping = aes(oil_Close,Percent)) + 
+  geom_point() +
+  #geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by Crudeoil price", x = "Crudeoil price", y = "Frequency of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+
+Temporary1 <- data %>% 
+  group_by(oil_Close) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+             Averagecostmd = totalcost/ClaimCount,
+            state_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+Temporary1
+
+ggplot(data = Temporary1, mapping = aes(oil_Close,Averagecostmd)) + 
+  geom_point() +
+  #geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average cost of claim by Crudeoil price", x = "Crudeoil price", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Analysis on AUS Private WPI---------------------------------------------
+```{r}
+claim_WPI <- data %>%
+  group_by(AUS_privateWPI) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2)) 
+claim_WPI_true <- filter(claim_WPI, Claim_TF == TRUE)
+claim_WPI_true
+ggplot(data = claim_WPI_true, mapping = aes(AUS_privateWPI,Percent)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by Australian private WPI", x = "Australian private WPI", y = "Frequency of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+
+Temporary1 <- data %>% 
+  group_by(AUS_privateWPI) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+             Averagecostmd = totalcost/ClaimCount,
+            state_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+Temporary1
+
+ggplot(data = Temporary1, mapping = aes(AUS_privateWPI,Averagecostmd)) + 
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average cost of claim by Australian private WPI", x = "Australian private WPI", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Analysis on Steel Price-------------------------------------------------
+```{r}
+claim_AUS_steel_price <- data %>%
+  group_by(AUS_steel_price) %>% 
+  count(Claim_TF)%>%
+  mutate(Percent = round(n / sum(n)*100,2)) 
+claim_AUS_steel_price_true <- filter(claim_AUS_steel_price, Claim_TF == TRUE)
+claim_AUS_steel_price_true
+ggplot(data = claim_AUS_steel_price_true, mapping = aes(AUS_steel_price,Percent)) + 
+  geom_point() +
+  #geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Percentage proportion of claim by Australian steel price", x = "Australian steel price", y = "Frequency of claim", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+
+Temporary1 <- data %>% 
+  group_by(AUS_steel_price) %>% 
+  summarise(ClaimCount = sum(total_claims_cost != 0),
+            totalcost = sum(total_claims_cost),
+            Averagecost = mean(total_claims_cost),
+             Averagecostmd = totalcost/ClaimCount,
+            state_index = (totalcost/sum(claim$total_claims_cost))/(ClaimCount/sum(claim$total_claims_cost != 0)))
+Temporary1
+
+ggplot(data = Temporary1, mapping = aes(AUS_steel_price,Averagecostmd)) + 
+  geom_point() +
+  #geom_smooth(se=FALSE) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Average cost of claim by Australian steel price", x = "Australian steel price", y = "Average cost", color = "Vehicle Class") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+##----Correlation Testing-----------------------------------------------------
+```{r}
+#correlation testing
+M <- subset(data, select=c(oil_Close , InsuranceCPI , AUSCPI_quater,AUS_steel_price , AUS_privateWPI))
+colnames(M) <- c("oil", "Ins CPI", "CPI", "Steel",  "WPI")
+corrplot(cor(M), method = "number")
+
+```
+
+##----Reload back up data in case of any change-------------------------------
+```{r}
+data <- backup_temp
+```
+
+
+
+
+
+
+
+
+
+
+############################
+##### Part 3 modelling #####
+############################
+
+##----Creating Train and Test Set---------------------------------------------
+```{r}
+## set the seed to make your partition reproducible
+set.seed(123)
+partition2 <- createDataPartition(data$claim_frequency, p=0.8, list = FALSE)
+train <- data[partition2, ]
+test <- data[-partition2, ]
+```
+
+##----Fitting a GLM on the dataset--------------------------------------------
+# Fit Model on Claim Frequency
+```{r}
+#Define Intercept-Only Model
+intercept_only <- glm(claim_frequency ~ 1, family="poisson", train)
+summary(intercept_only)
+
+#Including all variables for the model
+fit_all <- glm(claim_frequency ~ vehicle_class + risk_state_name + total_claims_cost + sum_insured + car_age + policy_tenure + oil_Close + InsuranceCPI + AUS_steel_price + AUS_privateWPI, family="poisson", train)
+summary(fit_all)
+```
+
+# Perform Both Direction Stepwise Regression (**Needs to run for quite long, ETA 1hr**)
+```{r}
+both <- step(intercept_only, direction='both', scope=formula(fit_all), trace=0)
+both$anova
+```
+
+# View Final Model (lowest AIC)
+```{r}
+both$coefficients
+```
+
+# Fit the Best Model for Claim Frequency from "both"Result (excluded "AUS_privateWPI")
+```{r}
+best_fit <- glm(claim_frequency ~ vehicle_class + risk_state_name + total_claims_cost + sum_insured + car_age + policy_tenure + InsuranceCPI + AUS_steel_price, family="poisson", train)
+summary(best_fit)
+
+glm_response_scores <- predict(best_fit, newdata = test,
+                     type = "response",
+                     se.fit = FALSE, dispersion = NULL, terms = NULL,
+                     na.action = na.pass)
+plot(roc(test$claim_frequency, glm_response_scores, direction="<"),
+     col="yellow", lwd=3, main="ROC Curve Claim Frequency")
+```
+
+##----Response Residual Testing-----------------------------------------------
+```{r}
+predictions.glm <- best_fit %>% predict(test)
+predictions <- (test$claim_frequency - predictions.glm)^2
+sqrt(mean(predictions))
+```
+
+# Fit Model on Claim Cost
+#----Create Correlation Matrix------------------------------------------------
+```{r}
+correlation_variables <- abs(cor(data_cc1[,-c(1,2,4)],use="pairwise.complete.obs"))
+
+for(i in 1:(nrow(correlation_variables)))
+{
+  correlation_variables[i,seq(from=i,to=ncol(correlation_variables),by=1)] <- NA
+}
+
+correlation_variables <- gather(data.frame(correlation_variables),"y","correlation")
+
+correlation_variables <- data.frame(x = rep(unique(correlation_variables$y),times=length(unique(correlation_variables$y))),correlation_variables)
+
+correlation_variables$x <- factor(correlation_variables$x,levels=colnames(data_cc1))
+correlation_variables$y <- factor(correlation_variables$y,levels=colnames(data_cc1))
+
+correlation_variables$correlation[correlation_variables$x == "log10.WPI" & correlation_variables$y == "AUS_privateWPI"] <- NA
+correlation_variables$correlation[correlation_variables$x == "log10.SteelPrice" & correlation_variables$y == "AUS_steel_price"] <- NA
+correlation_variables$correlation[correlation_variables$x == "log10.InsuranceCPI" & correlation_variables$y == "InsuranceCPI"] <- NA
+correlation_variables$correlation[correlation_variables$x == "log10.AUSCPI" & correlation_variables$y == "AUSCPI_quater"] <- NA
+correlation_variables$correlation[correlation_variables$x == "log10.oilclose" & correlation_variables$y == "oil_Close)"] <- NA
+correlation_variables$correlation[correlation_variables$x == "log10.totalclaimcost" & correlation_variables$y == "total_claims_cost"] <- NA
+correlation_variables$correlation[correlation_variables$x == "log10.suminsured" & correlation_variables$y == "sum_insured"] <- NA
+
+correlation_variables %>%
+  ggplot(.,aes(x = x,y = y)) +
+  geom_tile(aes(fill = correlation)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_fill_gradient2(low = "blue",mid = "white",high = "red",na.value = "grey80") +
+  geom_text(aes(label = round(correlation, 2)),size=2) +
+  ggtitle("Correlation Matrix Between Variables")
+```
+
+```{r}
+# resect train and test set
+set.seed(123)
+partition <- createDataPartition(data_cc1$total_claims_cost, p=0.8, list = FALSE)
+data_cc_tr <- data_cc1[partition,]
+data_cc_te <- data_cc1[-partition,]
+
+
+##-----------1. Log-transform full model and all predictors-------------------##
+lm1 <- lm(log(total_claims_cost) ~ risk_state_name + car_age + vehicle_class + policy_tenure + log10.suminsured 
+          + log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI,  data = data_cc_tr)
+
+summary(lm1)
+lm0_AIC <- step(lm1)
+
+##----------------1.1 log-transform model with interaction--------------------##
+lm1_interact <- lm(formula = log(total_claims_cost) ~ car_age + vehicle_class +
+            risk_state_name + policy_tenure + AUSCPI_quater + InsuranceCPI +
+            AUS_steel_price + AUS_privateWPI + car_age:vehicle_class +
+            car_age:risk_state_name + vehicle_class:risk_state_name,
+          data = data_cc_tr, subset = car_age * AUSCPI_quater + car_age *
+            InsuranceCPI + oil_Close * InsuranceCPI + policy_tenure *
+            car_age)
+summary(lm1_interact)
+lm1_interact_AIC <- step(lm1_interact) 
+summary(lm1_interact_AIC) 
+## In model 'lm1_interact_AIC', there was some level of significance on the external parameters, however it was expected to see a lot more.
+## The interaction term "vehicle_class:risk_state_name" seemed to be significant and not be disregarded.
+
+
+##----------------1.2 log-transform model with interaction--------------------##
+
+lm2_interact <- lm(log(total_claims_cost) ~ car_age + vehicle_class + risk_state_name + policy_tenure +
+            log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI +
+            car_age*vehicle_class + car_age*risk_state_name + risk_state_name*vehicle_class,
+          car_age*log10.AUSCPI + car_age*log10.InsuranceCPI + policy_tenure*car_age, data = data_cc_tr)
+summary(lm2_interact)
+AIC(lm2_interact)
+lm2_interact_AIC <- step(lm2_interact)
+summary(lm2_interact_AIC)
+AIC(lm2_interact_AIC)
+## Although there is some level of loss on the overall fit indicated by the R^2, 
+## the level of significance on the external parameters improved drastically from the previous model through the use of log-transformed variables.
+
+
+##----------------1.3 log-transform model with interaction--------------------##
+
+lm3_interact <- lm(log(total_claims_cost) ~ car_age + vehicle_class + risk_state_name + policy_tenure + claim_frequency +
+                     log10.suminsured +
+                     log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI +
+                     car_age*vehicle_class + car_age*risk_state_name + risk_state_name*vehicle_class,
+                   car_age*log10.AUSCPI + car_age*log10.InsuranceCPI + policy_tenure*car_age, data = data_cc_tr)
+summary(lm3_interact)
+lm3_interact_AIC <- step(lm3_interact)
+summary(lm3_interact_AIC)
+## Slight improvement on the significance of the external predictors as well as main data parameters from the previous model with added claim_frequency predictors
+
+
+##-----------------------------2 Gamma_GLM_null ------------------------------##
+glm_null<- glm(formula = total_claims_cost ~ 1, family = Gamma(link = log), data = data_cc_tr)
+summary(glm_null)
+AIC(glm_null)
+with(summary(glm_null), 1 - deviance/null.deviance)
+
+
+##-----------------------------2.1 Gamma_GLM_reduced--------------------------##
+glm1 <- glm(formula = total_claims_cost ~  risk_state_name + car_age + vehicle_class + policy_tenure + log10.suminsured 
+           + log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI, family = Gamma(link = log),
+           data = data_cc_tr)
+glm_reduced <- step(glm1)             
+summary(glm_reduced)
+glm_reduced_AIC <- step(glm_reduced)
+summary(glm_reduced_AIC)
+with(summary(glm_reduced_AIC), 1 - deviance/null.deviance)
+
+
+##----------------------------2.2 Gamma_GLM_interaction-----------------------##
+glm_interact1 <- glm(total_claims_cost ~ car_age + vehicle_class + risk_state_name + policy_tenure +
+                     log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI +
+                     car_age*vehicle_class + car_age*risk_state_name + risk_state_name*vehicle_class,
+                   car_age*log10.AUSCPI + car_age*log10.InsuranceCPI + policy_tenure*car_age, family = Gamma(link = log),
+                   data = data_cc_tr)
+summary(glm_interact1)
+glm_interact1_AIC <- step(glm_interact1)
+summary(glm_interact1_AIC)
+with(summary(glm_interact1_AIC), 1 - deviance/null.deviance)
+
+
+##----------------------------2.3 Gamma_GLM_interaction-----------------------##
+
+glm_interact2 <- glm(log(total_claims_cost) ~ car_age + vehicle_class + risk_state_name + policy_tenure + claim_frequency +
+                     log10.suminsured +
+                     log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI +
+                     car_age*vehicle_class + car_age*risk_state_name + risk_state_name*vehicle_class,
+                   car_age*log10.AUSCPI + car_age*log10.InsuranceCPI + policy_tenure*car_age, 
+                   family = Gamma(link = log), data = data_cc_tr)
+summary(glm_interact2)
+glm_interact2_AIC <- step(glm_interact2)
+summary(glm_interact2_AIC)
+with(summary(glm_interact2_AIC), 1 - deviance/null.deviance)
+
+
+##----------------------------2.3 Inverse Gaussian-----------------------##
+glm_ig1 <-  glm(log(total_claims_cost) ~   risk_state_name + car_age + vehicle_class + policy_tenure +car_age, family = inverse.gaussian(link = "log"),
+           data = data_cc_tr)
+glm_ig1_AIC <- step(glm_ig1)
+summary(glm_ig1_AIC)
+
+```
+
+##----Additional Function used for Estimation---------------------------------
+```{r}
+remove_missing_levels <- function(fit, test_data) {
+
+  # https://stackoverflow.com/a/39495480/4185785
+
+  # drop empty factor levels in test data
+  test_data %>%
+    droplevels() %>%
+    as.data.frame() -> test_data
+
+  # 'fit' object structure of 'lm' and 'glmmPQL' is different so we need to
+  # account for it
+  if (any(class(fit) == "glmmPQL")) {
+    # Obtain factor predictors in the model and their levels
+    factors <- (gsub("[-^0-9]|as.factor|\\(|\\)", "",
+                     names(unlist(fit$contrasts))))
+    # do nothing if no factors are present
+    if (length(factors) == 0) {
+      return(test_data)
+    }
+
+    map(fit$contrasts, function(x) names(unmatrix(x))) %>%
+      unlist() -> factor_levels
+    factor_levels %>% str_split(":", simplify = TRUE) %>%
+      extract(, 1) -> factor_levels
+
+    model_factors <- as.data.frame(cbind(factors, factor_levels))
+  } else {
+    # Obtain factor predictors in the model and their levels
+    factors <- (gsub("[-^0-9]|as.factor|\\(|\\)", "",
+                     names(unlist(fit$xlevels))))
+    # do nothing if no factors are present
+    if (length(factors) == 0) {
+      return(test_data)
+    }
+
+    factor_levels <- unname(unlist(fit$xlevels))
+    model_factors <- as.data.frame(cbind(factors, factor_levels))
+  }
+
+  # Select column names in test data that are factor predictors in
+  # trained model
+
+  predictors <- names(test_data[names(test_data) %in% factors])
+
+  # For each factor predictor in your data, if the level is not in the model,
+  # set the value to NA
+
+  for (i in 1:length(predictors)) {
+    found <- test_data[, predictors[i]] %in% model_factors[
+      model_factors$factors == predictors[i], ]$factor_levels
+    if (any(!found)) {
+      # track which variable
+      var <- predictors[i]
+      # set to NA
+      test_data[!found, predictors[i]] <- NA
+      # drop empty factor levels in test data
+      test_data %>%
+        droplevels() -> test_data
+      # issue warning to console
+      message(sprintf(paste0("Setting missing levels in '%s', only present",
+                             " in test data but missing in train data,",
+                             " to 'NA'."),
+                      var))
+    }
+  }
+  return(test_data)
+}
+```
+
+##----Validation Predictions--------------------------------------------------
+```{r}
+#linear regressions
+lm1_pred <- exp(predict.lm(lm0_AIC,data_cc_te))
+lm2_pred <- exp(predict(lm1_interact_AIC, newdata=na.omit(remove_missing_levels(fit=lm1_interact_AIC, test_data=data_cc_te))))
+lm3_pred <- exp(predict.lm(lm2_interact_AIC,newdata=na.omit(remove_missing_levels(fit=lm1_interact_AIC, test_data=data_cc_te))))
+lm4_pred <- exp(predict.lm(lm3_interact_AIC,newdata=na.omit(remove_missing_levels(fit=lm1_interact_AIC, test_data=data_cc_te))))
+sqrt(mean((data_cc_te$total_claims_cost - lm1_pred)^2))
+sqrt(mean((data_cc_te$total_claims_cost - lm2_pred)^2))                
+sqrt(mean((data_cc_te$total_claims_cost - lm3_pred)^2))    
+sqrt(mean((data_cc_te$total_claims_cost - lm4_pred)^2))
+
+#glms                 
+glm_redpred <- predict(glm_reduced_AIC, newdata = data_cc_te,
+                     type = "response",
+                     se.fit = FALSE, dispersion = NULL, terms = NULL,
+                     na.action = na.pass)
+sqrt(mean((data_cc_te$total_claims_cost - glm_redpred )^2))
+
+glm_1pred <- predict(glm_interact1_AIC, newdata = data_cc_te,
+                     type = "response",
+                     se.fit = FALSE, dispersion = NULL, terms = NULL,
+                     na.action = na.pass)
+sqrt(mean((data_cc_te$total_claims_cost - glm_1pred)^2))
+
+glm_2pred <- exp(predict(glm_interact2_AIC, newdata = data_cc_te,
+                     type = "response",
+                     se.fit = FALSE, dispersion = NULL, terms = NULL,
+                     na.action = na.pass))
+sqrt(mean((data_cc_te$total_claims_cost - glm_2pred )^2))
+
+glm_ig1pred <- exp(predict(glm_ig1_AIC, newdata = data_cc_te,
+                     type = "response",
+                     se.fit = FALSE, dispersion = NULL, terms = NULL,
+                     na.action = na.pass))
+sqrt(mean((data_cc_te$total_claims_cost - glm_ig1pred )^2))
+```
+
+K-fold validation
+```{r}
+# Define training control
+set.seed(123)
+train.control <- trainControl(method = "repeatedcv", 
+                              number = 10, repeats = 10)
+# Train the model
+cv_lm1<- train(log(total_claims_cost) ~ risk_state_name + car_age + vehicle_class +  policy_tenure + log10.suminsured + log10.oilclose + log10.AUSCPI, 
+               data = data_cc1, method = "lm", trControl = train.control)
+cv_lm2<- train(log(total_claims_cost) ~ car_age + vehicle_class +  risk_state_name + AUSCPI_quater + InsuranceCPI + AUS_steel_price +  car_age:vehicle_class + vehicle_class:risk_state_name, 
+               data = data_cc1, method = "lm", trControl = train.control)
+cv_lm3<- train(log(total_claims_cost) ~ car_age + vehicle_class +  risk_state_name + policy_tenure + log10.oilclose + log10.AUSCPI +   log10.InsuranceCPI + log10.SteelPrice
+               + log10.WPI + car_age:risk_state_name + vehicle_class:risk_state_name, 
+               data = data_cc1, method = "lm",  trControl = train.control)
+cv_lm4<- train(log(total_claims_cost) ~ car_age + vehicle_class +  risk_state_name + policy_tenure + claim_frequency + log10.suminsured +  log10.oilclose + log10.AUSCPI + log10.InsuranceCPI
+               + log10.SteelPrice +  log10.WPI + car_age:risk_state_name + vehicle_class:risk_state_name , 
+               data = data_cc1, method = "lm",  trControl = train.control)
+# Summarize the results
+print(cv_lm1)
+print(cv_lm2)
+print(cv_lm3)
+print(cv_lm4)
+
+cv_glmreduced<- train(total_claims_cost ~ risk_state_name + car_age +   vehicle_class + policy_tenure + log10.suminsured + log10.InsuranceCPI, family = Gamma(link = log), 
+                      data = data_cc1, method = "glm",  trControl = train.control)
+
+
+cv_glm1<- train(total_claims_cost ~ car_age + vehicle_class + risk_state_name +  policy_tenure + log10.oilclose + log10.AUSCPI + log10.InsuranceCPI +  log10.SteelPrice + car_age:vehicle_class
+                + car_age:risk_state_name +   vehicle_class:risk_state_name,
+                family = Gamma(link = log),data = data_cc1, method = "glm",trControl = train.control)
+
+cv_glm2<- train(log(total_claims_cost) ~ car_age + vehicle_class +   risk_state_name + policy_tenure + claim_frequency + log10.suminsured +  log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice 
+                + log10.WPI + car_age:vehicle_class + vehicle_class:risk_state_name, 
+                family = Gamma(link = log), data = data_cc1, method = "glm",trControl = train.control)
+
+cv_ig1<- train(log(total_claims_cost) ~   risk_state_name + car_age + vehicle_class + policy_tenure +car_age, family = inverse.gaussian(link = "log"),
+                 data = data_cc1, method = "glm",trControl = train.control)
+
+cv_glmreduced
+cv_glm1
+cv_glm2
+cv_ig1
+
+```
+
+##----Lasso, Ridge, PLS and PCR for Claim Frequency---------------------------
+```{r}
+lambda.grid <- 10^seq(10,-2,length.out=100)
+train.modelmatrix <- model.matrix(claim_frequency ~ vehicle_class + risk_state_name + total_claims_cost + sum_insured + car_age + policy_tenure + InsuranceCPI + AUS_steel_price, data)[,-1]
+
+ridge_fit <- glmnet(train.modelmatrix[partition2,],as.matrix(data[partition2,15]),
+alpha=0, lambda=lambda.grid)
+cv.ridge <- cv.glmnet(train.modelmatrix[partition2,],
+as.matrix(data[partition2,15]), alpha=0, lambda=lambda.grid)
+predict(ridge_fit, type="coefficients", s=cv.ridge$lambda.min)
+plot(cv.ridge)
+
+mean((data[-partition2,"claim_frequency"] - predict(ridge_fit, s=cv.ridge$lambda.min,newx <- train.modelmatrix[-partition2,]))^2)
+
+lasso_fit <- glmnet(train.modelmatrix[partition2,],as.matrix(data[partition2,15]),
+alpha=1, lambda=lambda.grid)
+cv.lasso <- cv.glmnet(train.modelmatrix[partition2,],
+as.matrix(data[partition2,15]), alpha=1, lambda=lambda.grid)
+predict(lasso_fit, type="coefficients", s=cv.lasso$lambda.min)
+plot(cv.lasso)
+
+mean((data[-partition2,"claim_frequency"] - predict(lasso_fit, s=cv.lasso$lambda.min,newX <- train.modelmatrix[-partition2,]))^2)
+
+pcr_fit <- pcr(claim_frequency~vehicle_class + risk_state_name + total_claims_cost + sum_insured + car_age + policy_tenure + InsuranceCPI + AUS_steel_price, data=data, subset=partition2,scale=TRUE,validation="CV")
+summary(pcr_fit)
+validationplot(pcr_fit,val.type="MSEP")
+head(pcr_fit)
+
+mean((data[-partition2, "claim_frequency"] - predict(pcr_fit, newdata=data[-partition2,],ncomp=10))^2)
+
+pls_fit <- plsr(claim_frequency~vehicle_class + risk_state_name + total_claims_cost + sum_insured + car_age + policy_tenure + InsuranceCPI + AUS_steel_price, data=data, subset=partition2, scale=TRUE,validation="CV")
+summary(pls_fit)
+validationplot(pls_fit,val.type="MSEP")
+head(pls_fit)
+
+mean((data[-partition2, "claim_frequency"] - predict(pls_fit, newdata=data[-partition2,],ncomp=2))^2)
+```
+
+##----Lasso, Ridge, PLS and PCR for Claim Cost--------------------------------
+```{r}
+set.seed(123)
+partition <- createDataPartition(data_cc1$total_claims_cost, p=0.8, list = FALSE)
+data_cc_tr <- data_cc1[partition,]
+data_cc_te <- data_cc1[-partition,]
+
+lambda.grid <- 10^seq(10,-2,length.out=100)
+
+train2.modelmatrix <- model.matrix(total_claims_cost ~ risk_state_name + car_age + vehicle_class + policy_tenure + log10.suminsured + log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI, data_cc1, contrasts.arg = list(risk_state_name = contrasts(as.factor(data_cc1$risk_state_name), contrasts = FALSE)))[,-1]
+
+ridge_fit2 <- glmnet(train2.modelmatrix[partition,],as.matrix(data_cc1[partition,13]),
+alpha=0, lambda=lambda.grid)
+cv.ridge2 <- cv.glmnet(train2.modelmatrix[partition,],
+as.matrix(data_cc1[partition,13]), alpha=0, lambda=lambda.grid)
+predict(ridge_fit2, type="coefficients", s=cv.ridge2$lambda.min)
+predict(ridge_fit2,s=cv.ridge2$lambda.min,newx = train2.modelmatrix[-partition,])
+
+plot(cv.ridge2)
+
+sqrt(mean((data_cc1[-partition,"total_claims_cost"] - predict(ridge_fit2, s=cv.ridge2$lambda.min,newx <- train2.modelmatrix[-partition,]))^2))
+
+lasso_fit2 <- glmnet(train2.modelmatrix[partition,],as.matrix(data_cc1[partition,13]),
+alpha=1, lambda=lambda.grid)
+cv.lasso2 <- cv.glmnet(train2.modelmatrix[partition,],
+as.matrix(data_cc1[partition,13]), alpha=1, lambda=lambda.grid)
+predict(lasso_fit2, type="coefficients", s=cv.lasso2$lambda.min)
+predict(lasso_fit2,s=cv.lasso2$lambda.min,newx = train2.modelmatrix[-partition,])
+
+plot(cv.lasso2)
+
+sqrt(mean((data_cc1[-partition,"total_claims_cost"] - predict(lasso_fit2, s=cv.lasso2$lambda.min,newX <- train2.modelmatrix[-partition,]))^2))
+
+#Need to drop two data entry on training data under risk_state_name NT as testing data set does not have any data under risk_state_name NT
+data_cc_tr_1 = data_cc_tr[-which(data_cc_tr$risk_state_name=="NT"),]
+
+pcr_fit2 <- pcr(total_claims_cost ~ risk_state_name + car_age + vehicle_class + policy_tenure + log10.suminsured + log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI, data=data_cc_tr_1,scale=TRUE,validation="CV")
+summary(pcr_fit2)
+
+validationplot(pcr_fit2,val.type="MSEP")
+
+sqrt(mean((data_cc_te[, "total_claims_cost"] - predict(pcr_fit2, newdata=data_cc_te,ncomp=11))^2))
+
+
+pls_fit2 <- plsr(total_claims_cost ~ risk_state_name + car_age + vehicle_class + policy_tenure + log10.suminsured + log10.oilclose + log10.AUSCPI + log10.InsuranceCPI + log10.SteelPrice + log10.WPI, family = Gamma(link = log), data=data_cc_tr_1,scale=TRUE, validation="CV")
+summary(pls_fit2)
+
+sqrt(mean((data_cc_te[, "total_claims_cost"] - predict(pls_fit2, newdata=data_cc_te,ncomp=4))^2))
+
+pls_fit2 <- plsr(total_claims_cost ~ risk_state_name + car_age + vehicle_class + policy_tenure + log10.suminsured   + log10.InsuranceCPI , family = Gamma(link = log), data=data_cc_tr_1,scale=TRUE, validation="CV")
+summary(pls_fit2)
+coef(pls_fit2,ncomp=4)
+
+sqrt(mean((data_cc_te[, "total_claims_cost"] - predict(pls_fit2, newdata=data_cc_te,ncomp=4))^2))
+#compare with AIC model on validation set
+sqrt(mean((data_cc_te[, "total_claims_cost"] - predict(glm_reduced_AIC, newdata=data_cc_te, type = "response",
+                     se.fit = FALSE, dispersion = NULL, terms = NULL,
+                     na.action = na.pass))^2))
+
+validationplot(pls_fit2,val.type="MSEP")
+
+#compare with AIC on whole set using cross validation with n=4
+summary(plsr(total_claims_cost ~ risk_state_name + car_age + vehicle_class + policy_tenure + log10.suminsured   + log10.InsuranceCPI , family = Gamma(link = log), data=data_cc1,scale=TRUE, validation="CV",ncomp=4))
+```
+
+
+
+##############################################
+####### ------- Final models -------- ########
+##############################################
+
+
+```{r}
+#Claim cost model
+claim_cost_model <- glm(formula = total_claims_cost ~ risk_state_name + car_age + 
+    vehicle_class + policy_tenure + log10.suminsured + log10.InsuranceCPI, 
+    family = Gamma(link = log), data = data_cc1)
+summary(claim_cost_model)
+
+#Claim frequency model
+claim_frequency_model <- plsr(claim_frequency~vehicle_class + risk_state_name + total_claims_cost + sum_insured + car_age + policy_tenure + InsuranceCPI + AUS_steel_price, data=data,scale=TRUE,validation="CV",ncomp=2)
+summary(claim_frequency_model)
+coef(claim_frequency_model)
+
+```
