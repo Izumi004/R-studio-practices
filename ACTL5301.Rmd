@@ -1,0 +1,544 @@
+Libraries
+```{r}
+library(copula)
+library(ggplot2)
+library(MASS)
+library(qrmtools)
+library(viridis)
+```
+
+Read data and format data
+```{r}
+data <- read.csv("data.csv")
+data$Date <- as.Date(data$Date, format="%Y/%m/%d")
+```
+
+Task 2 find logarithmic differences
+```{r}
+data$XG <- c(0, diff(log(data$GOOG)))
+data$XA <- c(0, diff(log(data$AAPL)))
+```
+
+Task 3 losses of the investments of one dollar in the two stocks
+```{r}
+data$LG <- 1 - exp(data$XG)
+data$LA <- 1 - exp(data$XA)
+```
+
+Task 4 tail risk comparison
+```{r}
+alphas <- c(0.05, 0.01, 0.005)
+results_task4 <- data.frame(Alpha = numeric(), AAPL_VaR = numeric(), GOOG_VaR = numeric(), AAPL_ES = numeric(), GOOG_ES = numeric())
+
+for (alpha in alphas) {
+  aapl_var <- quantile(data$LA, 1-alpha,  na.rm=TRUE)
+  goog_var <- quantile(data$LG, 1-alpha,  na.rm=TRUE)
+  
+  aapl_es <- mean(data$LA[data$LA > aapl_var],  na.rm=TRUE)
+  goog_es <- mean(data$LG[data$LG > goog_var], na.rm=TRUE)
+  
+  results_task4 <- rbind(results_task4, data.frame(Alpha = alpha,
+                                                   AAPL_VaR = aapl_var, 
+                                                   GOOG_VaR = goog_var,
+                                                   AAPL_ES = aapl_es,
+                                                   GOOG_ES = goog_es))
+}
+
+print(results_task4)
+```
+Task 5 and 6 portfolio VaR and Es
+```{r}
+data$Lportfolio <- 0.5 * (data$LA + data$LG)
+
+results_task6 <- data.frame(Alpha = numeric(),
+                            VaR = numeric(),
+                            ES = numeric())
+
+for (alpha in alphas) {
+  portfolio_var <- quantile(data$Lportfolio, 1-alpha, na.rm=TRUE)
+  portfolio_es <- mean(data$Lportfolio[data$Lportfolio > portfolio_var], na.rm=TRUE)
+  
+  results_task6 <- rbind(results_task6, data.frame(Alpha = alpha,
+                                                   VaR = portfolio_var,
+                                                   ES = portfolio_es))
+}
+
+print(results_task6)
+
+
+
+
+
+set.seed(12321)
+n <- 10000
+U_1 <- runif(n)
+U_2 <- runif(n)
+
+X_A_ind <- quantile(data$XA,U_1, type = 1)
+X_G_ind <- quantile(data$XG,U_2, type = 1)
+L_A_sim <- 1- exp(X_A_ind)
+L_G_sim <- 1- exp(X_G_ind)
+L_sim_ind <- 0.5*(L_A_sim+L_G_sim)
+
+results_task6_ind <- data.frame(Alpha = numeric(),
+                                VaR = numeric(),
+                                ES = numeric())
+
+for (alpha in alphas) {
+  ind_portfolio_var <- quantile(L_sim_ind, 1-alpha, na.rm=TRUE)
+  ind_portfolio_es <- mean(L_sim_ind[L_sim_ind > ind_portfolio_var], na.rm=TRUE)
+  
+  results_task6_ind <- rbind(results_task6_ind, data.frame(Alpha = alpha,
+                                                           VaR = ind_portfolio_var,
+                                                           ES = ind_portfolio_es))
+}
+
+
+print(results_task6_ind)
+
+q_lower <- 0.05
+q_upper <- 0.95
+
+# Estimate lower tail dependence coefficient
+lambda_L_empirical <- sum(U_1 <= q_lower & U_2 <= q_lower) / sum(U_1 <= q_lower)
+
+# Estimate upper tail dependence coefficient
+lambda_U_empirical <- sum(U_1 > q_upper & U_2 > q_upper) / sum(U_1 > q_upper)
+
+cat("Empirical Lower Tail Dependence Coefficient:", lambda_L_empirical, "\n")
+cat("Empirical Upper Tail Dependence Coefficient:", lambda_U_empirical, "\n")
+
+```
+
+
+Task 7
+```{r}
+# Initialise
+total_row <- nrow(data)
+number_con <- 0
+number_dis <- 0
+
+# Loop
+for (i in 1:(total_row-1)) {
+  for (j in (i+1):total_row) {
+    
+    concordant <- (data$LA[i] - data$LA[j]) * (data$LG[i] - data$LG[j]) > 0
+    discordant <- (data$LA[i] - data$LA[j]) * (data$LG[i] - data$LG[j]) < 0
+    
+    
+    number_con <- number_con + concordant
+    number_dis <- number_dis + discordant
+  }
+}
+
+# Kendall's tau
+tau <- (number_con - number_dis) / (number_con + number_dis)
+
+
+print(tau)
+
+```
+Task 8
+```{r}
+# Set number of iterations
+n_samples <- 100*nrow(data)
+
+# Transform returns into uniform margins
+data$U1 <- rank(data$XA, na.last = "keep") / (nrow(data) + 1)
+data$U2 <- rank(data$XG, na.last = "keep") / (nrow(data) + 1)
+
+# Estimate the correlation coefficient
+rho_hat <- cor(data$XA, data$XG, use = "complete.obs")
+
+# Create the Gaussian copula
+gaussian_cop <- normalCopula(rho_hat)
+
+set.seed(54321) 
+
+simulated_U <- rCopula(n_samples, gaussian_cop)
+
+plot(simulated_U, main = "Simulated Samples with Gaussian Copula", xlab = "U1", ylab = "U2")
+
+# plot with ggplot2
+simulated_df <- as.data.frame(simulated_U)
+colnames(simulated_df) <- c("U1", "U2")
+
+ggplot(simulated_df, aes(x = U1, y = U2)) + 
+  stat_density2d(aes(fill = ..density..), geom = "tile", contour = FALSE, n = 100) +
+  scale_fill_viridis_c(limits=c(0, 3.5)) +
+  labs(title = "Density plot of Simulated Samples", x = "U1", y = "U2") +
+  theme_minimal()
+
+X_hat_A <- quantile(data$XA, simulated_U[, 1], na.rm = TRUE)
+X_hat_G <- quantile(data$XG, simulated_U[, 2], na.rm = TRUE)
+
+# Loss calculations using simulated returns
+L_hat <- 0.5 * (1 - exp(X_hat_A) + 1 - exp(X_hat_G))
+
+
+
+results_task8 <- data.frame(Alpha = numeric(), VaR = numeric(), ES = numeric())
+
+for (alpha in alphas) {
+  simulated_var <- quantile(L_hat, 1 - alpha)
+  simulated_es <- mean(L_hat[L_hat > simulated_var])
+  
+  results_task8 <- rbind(results_task8, data.frame(Alpha = alpha, VaR = simulated_var, ES = simulated_es))
+}
+
+# ------ Tail Dependence Computations -------
+# Calculate the tail dependence coefficient for the Gaussian copula
+q_lower = 0.05
+q_upper = 0.95
+lambda_L_gaussian = sum(simulated_U[,1] <= q_lower & simulated_U[,2] <= q_lower) / sum(simulated_U[,1] <= q_lower)
+lambda_U_gaussian = sum(simulated_U[,1] > q_upper & simulated_U[,2] > q_upper) / sum(simulated_U[,1] > q_upper)
+
+print(paste("Gaussian Copula Lower Tail Dependence:", lambda_L_gaussian))
+print(paste("Gaussian Copula Upper Tail Dependence:", lambda_U_gaussian))
+
+# Print original results
+print(results_task8)
+
+```
+
+If not ussing the copula library 
+```{r}
+# Calculate the correlation
+rho <- cor(data$XA, data$XG)
+
+# Create uniform distributed random variables
+U1 <- runif(n_samples, 0, 1)
+U2 <- runif(n_samples, 0, 1)
+
+# Apply the Gaussian copula transformation
+C <- qnorm(c(U1, U2), mean = 0, sd = 1, lower.tail = TRUE)
+C <- matrix(C, ncol = 2)
+Z1 <- C[,1]
+Z2 <- C[,2]
+
+Y1 <- Z1
+Y2 <- rho*Z1 + sqrt(1-rho^2)*Z2
+
+simulated_U1 <- pnorm(Y1)
+simulated_U2 <- pnorm(Y2)
+
+# Conversion to original data scale using the quantile function
+simul_XA <- quantile(data$XA, simulated_U1, na.rm = TRUE, type = 8)
+simul_XG <- quantile(data$XG, simulated_U2, na.rm = TRUE, type = 8)
+simul_LA <- 1 - exp(simul_XA)
+simul_LG <- 1 - exp(simul_XG)
+
+L_hat = 0.5 * (simul_LA + simul_LG)
+
+# VaR and ES Computations
+results_task8 <- data.frame()
+
+
+for (alpha in alphas) {
+  simulated_var <- quantile(L_hat, 1 - alpha)
+  simulated_es <- mean(L_hat[L_hat > simulated_var])
+  
+  results_task8 <- rbind(results_task8, data.frame(Alpha = alpha, VaR = simulated_var, ES = simulated_es))
+}
+
+# Tail Dependence Computations
+simulated_U <- data.frame(U1 = simulated_U1, U2 = simulated_U2)
+
+q_lower = 0.05
+q_upper = 0.95
+lambda_L_gaussian = sum(simulated_U$U1 <= q_lower & simulated_U$U2 <= q_lower) / sum(simulated_U$U1 <= q_lower)
+lambda_U_gaussian = sum(simulated_U$U1 > q_upper & simulated_U$U2 > q_upper) / sum(simulated_U$U1 > q_upper)
+
+print(paste("Gaussian Copula Lower Tail Dependence:", lambda_L_gaussian))
+print(paste("Gaussian Copula Upper Tail Dependence:", lambda_U_gaussian))
+
+# Print results
+print(results_task8)
+
+```
+
+Task 9 and 10
+```{r}
+# Initialisation
+n_samples <- 100*nrow(data)
+rho_hat <- cor(data$XA, data$XG, use = "complete.obs")
+sigma <- matrix(c(1, rho_hat, rho_hat, 1), 2)  # The 2x2 correlation matrix
+dof_values <- c(3, 10, 10000)  # Degrees of freedom for t-copula
+simulated_U_list <- list()
+lambda_L_values <- numeric()  # For storing lower tail coefficients
+lambda_U_values <- numeric()  # For storing upper tail coefficients
+
+mu <- c(0,0)
+
+
+rho_temp <- cov(data$XA, data$XG, use = "complete.obs")
+sigma_temp <- matrix(c(1, rho_hat, rho_hat, 1), 2)  # The 2x2 correlation matrix
+A <- t(chol(sigma_temp))  
+
+for (dof in dof_values) {
+  
+  # Simulate from the multivariate t-distribution
+  W <- 1/rgamma(n_samples, shape=0.5*dof, scale=2/dof)  # Using the inverse gamma distribution
+  Z <- MASS::mvrnorm(n_samples, mu=c(0,0), Sigma=diag(2))  # Independent standard normals
+  T <- matrix(0, n_samples, 2)
+  
+  for (i in 1:n_samples) {
+    T[i,] <- mu + sqrt(W[i]) * (A %*% Z[i,])
+  }
+  
+  # Convert to uniform using the pt function
+  U1 <- pt(T[,1], df=dof)
+  U2 <- pt(T[,2], df=dof)
+  
+  # Compute tail dependence coefficients based on simulated U_t
+  q_lower = 0.05
+  q_upper = 0.95
+  lambda_L_empirical = sum(U1 <= q_lower & U2 <= q_lower) / sum(U1 <= q_lower)
+  lambda_U_empirical = sum(U1 > q_upper & U2 > q_upper) / sum(U1 > q_upper)
+  
+  # Store the coefficients
+  lambda_L_values <- c(lambda_L_values, lambda_L_empirical)
+  lambda_U_values <- c(lambda_U_values, lambda_U_empirical)
+  
+  # Convert uniform margins to data margins using empirical CDF directly in loop
+  X_hat_A <- quantile(data$XA, U1, na.rm = TRUE)
+  X_hat_G <- quantile(data$XG, U2, na.rm = TRUE)
+  
+  # Compute the simulated portfolio loss
+  L_hat <- 0.5 * (1 - exp(X_hat_A) + 1 - exp(X_hat_G))
+  
+  results_for_10 <- data.frame(Alpha = numeric(), VaR = numeric(), ES = numeric())
+  
+  
+  
+  
+  
+  for (alpha in alphas) {
+    simulated_var <- quantile(L_hat, 1 - alpha)
+    simulated_es <- mean(L_hat[L_hat > simulated_var])
+    results_for_10 <- rbind(results_for_10, data.frame(Alpha = alpha, VaR = simulated_var, ES = simulated_es))
+  }
+  
+  results_task10[[paste("Degrees of freedom =", dof)]] <- results_for_10
+  simulated_U_list[[paste("Degrees of freedom =", dof)]] <- U_t
+}
+
+# Print results
+for (key in names(results_task10)) {
+  print(paste("Results for", key))
+  print(results_task10[[key]])
+}
+
+# Print tail coefficients
+results_lambda = data.frame(
+  Degree_of_Freedom = dof_values,
+  Lower_Tail_Dependence = lambda_L_values,
+  Upper_Tail_Dependence = lambda_U_values
+)
+print(results_lambda)
+
+results_task10
+```
+
+
+
+
+
+using library mvtnorm
+```{r}
+library(mvtnorm)
+
+# Initialisation
+n_samples <- 100*nrow(data)
+rho_hat <- cor(data$XA, data$XG, use = "complete.obs")
+sigma_hat <- matrix(c(1, rho_hat, rho_hat, 1), 2)  # The 2x2 correlation matrix
+dof_values <- c(3, 10, 10000)  # Degrees of freedom for t-copula
+simulated_U_list <- list()
+lambda_L_values <- numeric()  # For storing lower tail coefficients
+lambda_U_values <- numeric()  # For storing upper tail coefficients
+
+mu <- c(mean(data$XA, na.rm=TRUE), mean(data$XG, na.rm=TRUE))
+
+results_task10 <- list()
+
+for (dof in dof_values) {
+  
+  # Simulate from the multivariate t-distribution using rmvt()
+  T <- rmvt(n_samples, sigma = sigma_hat, df = dof)
+  
+  # Convert to uniform using the pt function
+  U1 <- pt(T[,1], df=dof)
+  U2 <- pt(T[,2], df=dof)
+  
+  # Compute tail dependence coefficients based on simulated U_t
+  q_lower = 0.05
+  q_upper = 0.95
+  lambda_L_empirical = sum(U1 <= q_lower & U2 <= q_lower) / sum(U1 <= q_lower)
+  lambda_U_empirical = sum(U1 > q_upper & U2 > q_upper) / sum(U1 > q_upper)
+  
+  # Store the coefficients
+  lambda_L_values <- c(lambda_L_values, lambda_L_empirical)
+  lambda_U_values <- c(lambda_U_values, lambda_U_empirical)
+  
+  # Convert uniform margins to data margins using empirical CDF directly in loop
+  X_hat_A <- quantile(data$XA, U1, na.rm = TRUE)
+  X_hat_G <- quantile(data$XG, U2, na.rm = TRUE)
+  
+  # Compute the simulated portfolio loss
+  L_hat <- 0.5 * (1 - exp(X_hat_A) + 1 - exp(X_hat_G))
+  
+  results_for_10 <- data.frame(Alpha = numeric(), VaR = numeric(), ES = numeric())
+  for (alpha in alphas) {
+    simulated_var <- quantile(L_hat, 1 - alpha)
+    simulated_es <- mean(L_hat[L_hat > simulated_var])
+    results_for_10 <- rbind(results_for_10, data.frame(Alpha = alpha, VaR = simulated_var, ES = simulated_es))
+  }
+  
+  results_task10[[paste("Degrees of freedom =", dof)]] <- results_for_10
+  simulated_U_list[[paste("Degrees of freedom =", dof)]] <- cbind(U1, U2)
+}
+
+# Print results
+for (key in names(results_task10)) {
+  print(paste("Results for", key))
+  print(results_task10[[key]])
+}
+
+# Print tail coefficients
+results_lambda = data.frame(
+  Degree_of_Freedom = dof_values,
+  Lower_Tail_Dependence = lambda_L_values,
+  Upper_Tail_Dependence = lambda_U_values
+)
+print(results_lambda)
+```
+
+
+```{r}
+print(results_task10)
+
+```
+
+
+```{r}
+set.seed(300)
+
+t_df3 <- rmvt(n_samples, sigma = sigma_hat, df = 3)
+
+Y_1_t_df3 <- t_df3[,1]
+Y_2_t_df3 <- t_df3[,2]
+U_1_t_df3 <-pt(Y_1_t_df3, df = 3)
+U_2_t_df3 <-pt(Y_2_t_df3,df = 3)
+X1_t_df3 <- quantile(data$XA, U_1_t_df3,type = 1)
+X2_t_df3 <- quantile(data$XG,U_2_t_df3,type =1)
+L_A_t_df3<-1- exp(X1_t_df3)
+L_G_t_df3<-1- exp(X2_t_df3)
+L_t_df3 <- 0.5*(L_A_t_df3+ L_G_t_df3)
+
+quantile(L_t_df3, 0.95)
+
+```
+
+
+
+Task 11
+```{r}
+
+pirnts <-for(dof in dof_values) {
+  df <- as.data.frame(simulated_U_list[[paste("Degrees of freedom =", dof)]])
+  colnames(df) <- c("U1", "U2")
+  
+  # Scatter plot
+  p1 <- ggplot(df, aes(x = U1, y = U2)) + 
+    geom_point(alpha = 0.5, size = 0.8) + 
+    labs(title = paste("Scatter Plot for Degrees of freedom =", dof), x = "U1", y = "U2") +
+    theme_minimal()
+  
+  # Density plot
+  p2 <- ggplot(df, aes(x = U1, y = U2)) + 
+    stat_density2d(aes(fill = ..density..), geom = "tile", contour = FALSE, n = 100) +
+    scale_fill_viridis_c(limits=c(0, 3.5)) + 
+    labs(title = paste("Density Plot for Degrees of freedom =", dof), x = "U1", y = "U2") +
+    theme_minimal()
+
+  print(p1)
+  print(p2)
+}
+print(pirnts)
+
+```
+ 
+Task12 
+```{r}
+results_combined <- rbind(
+  data.frame(Method = "Empirical", results_task6),
+  data.frame(Method = "Gaussian", results_task8)
+)
+
+# Appending t-copula results
+for (key in names(results_task10)) {
+  temp <- data.frame(Method = paste("t-copula", key), results_task10[[key]])
+  results_combined <- rbind(results_combined, temp)
+}
+
+desired_order <- c("Empirical", "Gaussian", "t-copula Degrees of freedom = 3",  "t-copula Degrees of freedom = 10", "t-copula Degrees of freedom = 10000")
+
+results_combined$Method <- factor(results_combined$Method, levels = desired_order)
+
+print(results_combined)
+
+# Color mapping
+colors <- c("Empirical" = "black", 
+            "Gaussian" = "red", 
+            "t-copula Degrees of freedom = 3" = "darkgreen", 
+            "t-copula Degrees of freedom = 10" = "green",
+            "t-copula Degrees of freedom = 10000" = "lightgreen")
+
+# Graphical comparison for VaR
+
+ggplot(results_combined, aes(x = Alpha, y = VaR, color = Method)) +
+  geom_line() +
+  labs(title = "Comparison of VaR values", x = "Confidence Level (Alpha)", y = "Value at Risk (VaR)") +
+  scale_color_manual(values = colors) +  # Use the manually specified colors
+  theme_minimal()
+
+# Graphical comparison for ES
+
+ggplot(results_combined, aes(x = Alpha, y = ES, color = Method)) +
+  geom_line() +
+  labs(title = "Comparison of ES values", x = "Confidence Level (Alpha)", y = "Expected Shortfall (ES)") +
+  scale_color_manual(values = colors) +  # Use the manually specified colors
+  theme_minimal()
+
+
+```
+
+```{r}
+# Compute the 5% and 95% quantiles for each data set
+q_05_LA = quantile(data$LA, 0.05)
+q_95_LA = quantile(data$LA, 0.95)
+q_05_LG = quantile(data$LG, 0.05)
+q_95_LG = quantile(data$LG, 0.95)
+
+# Empirical
+lower_tail_obs = sum(data$LA <= q_05_LA & data$LG <= q_05_LG) / sum(data$LG <= q_05_LG)
+upper_tail_obs = sum(data$LA >= q_95_LA & data$LG >= q_95_LG) / sum(data$LG >= q_95_LG)
+
+print(paste("Empirical Lower Tail Dependence:", lower_tail_obs))
+print(paste("Empirical Upper Tail Dependence:", upper_tail_obs))
+
+# Density plot
+ggplot(data, aes(x = U1, y = U2)) + 
+  stat_density2d(aes(fill = ..density..), geom = "tile", contour = FALSE, n = 100) +
+  scale_fill_viridis_c(limits=c(0, 3.5)) +
+  labs(title = "Density Plot for Original Data", x = "U1", y = "U2") +
+  theme_minimal()
+
+
+
+```
+
+
+
+
+
